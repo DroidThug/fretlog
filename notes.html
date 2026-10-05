@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Note Finder</title>
+<meta name="description" content="A note name appears; find it on the guitar and play it. The mic checks the pitch.">
+<meta name="theme-color" content="#0c0c0c">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@700;800&family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;600&display=swap">
+<link rel="stylesheet" href="common.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='5' cy='8' r='4' fill='%23d0142c'/%3E%3Ccircle cx='12' cy='8' r='3' fill='%23f5c518'/%3E%3C/svg%3E">
+<style>
+.prompt { border: 2px solid var(--line); border-radius: 12px; padding: 22px 16px; text-align: center; display: flex; flex-direction: column; gap: 8px; align-items: center; }
+.prompt .big { font: 800 clamp(4.5rem, 22vw, 8rem)/.85 var(--f-display); color: var(--yellow); }
+.prompt .sub { font: 600 1.1rem var(--f-body); }
+.prompt.right { border-color: var(--yellow); }
+.prompt.wrong { border-color: var(--red); }
+.meta { display: flex; justify-content: space-between; font: .9rem var(--f-mono); color: var(--grey); }
+.fb { min-height: 1.6em; font: 600 1rem var(--f-mono); }
+</style>
+</head>
+<body>
+<main class="wrap">
+  <section class="intro" id="intro"></section>
+  <div class="stack">
+    <section class="panel" aria-labelledby="h-mic">
+      <header><h2 id="h-mic"><span class="step">01</span>Input</h2></header>
+      <div id="mic" class="stack"></div>
+      <p class="small muted">No mic? You can still play: say whether you found it with “Got it” or “Skip”.</p>
+    </section>
+    <section class="panel" aria-labelledby="h-q">
+      <header><h2 id="h-q"><span class="step">02</span>Find the note</h2></header>
+      <div class="meta"><span id="round"></span><span id="clock"></span></div>
+      <div class="prompt" id="prompt"><span class="big" id="big">?</span><span class="sub" id="sub">Press Start.</span></div>
+      <p class="fb" id="fb" aria-live="polite"></p>
+      <div class="row">
+        <button type="button" class="btn red big" id="start">Start</button>
+        <button type="button" class="btn" id="got" hidden>Got it</button>
+        <button type="button" class="btn ghost" id="skip" hidden>Skip</button>
+      </div>
+      <div id="result"></div>
+    </section>
+    <section class="panel" aria-labelledby="h-hist">
+      <header><h2 id="h-hist">History</h2></header>
+      <div id="hist"></div>
+    </section>
+  </div>
+</main>
+<script src="dsp.js"></script>
+<script src="chords.js"></script>
+<script src="lessons.js"></script>
+<script src="exercises.js"></script>
+<script src="common.js"></script>
+<script>
+(function () {
+  "use strict";
+  const D = FretDSP, $ = F.$, esc = F.esc;
+  const hit = F.exerciseFromHash("notes"), ex = hit ? hit.ex : F.firstExercise("notes", F.grade());
+  F.chrome("practice", () => { location.href = "index.html"; });
+  F.exerciseIntro($("#intro"), ex);
+  const items = D.noteItems(ex.params), ROUNDS = ex.params.rounds || 12, TIMEOUT = 20000;
+  const statKey = "nf." + ex.id;
+  const loadStats = () => { const s = F.store.get(statKey, {}); return s && typeof s === "object" ? s : {}; };
+  const mic = new F.Mic();
+  let tracker = null, q = null, clockT = null;
+
+  F.micPanel($("#mic"), mic, {
+    onReady() {
+      mic.needTime = true;
+      tracker = D.createNoteTracker({ minRms: mic.floor });
+      if (!mic._hooked) { mic._hooked = true; mic.on(onFrame); }
+    },
+  });
+  function onFrame(fr) {
+    if (!fr.time || !tracker || !q || !q.cur) return;
+    tracker.opts.minRms = mic.floor;
+    const r = D.yin(fr.time, fr.sampleRate);
+    const n = tracker.feed({ hz: r && r.hz, aperiodicity: r ? r.aperiodicity : 1, rms: D.rms(fr.time.subarray(fr.time.length - 1024)), t: fr.t });
+    if (n) onNote(D.hzToMidi(n.hz));
+  }
+  const where = it => it.fret === 0 ? "the open string" : `fret ${it.fret} on the ${D.STRING_LABEL[it.string]}`;
+
+  function start() {
+    q = { n: 0, firstTry: 0, times: [], stats: loadStats(), last: null, cur: null, missed: [] };
+    $("#result").innerHTML = ""; $("#start").hidden = true; $("#skip").hidden = false; $("#got").hidden = !!mic.ctx;
+    next();
+  }
+  function next() {
+    if (q.n >= ROUNDS) return finish();
+    q.n++;
+    const it = D.pickNext(items, q.stats, Math.random, q.last);
+    q.cur = it; q.last = it.key; q.t0 = performance.now(); q.wrong = false;
+    if (tracker) tracker.reset();
+    const open = ex.params.mode === "open";
+    $("#big").textContent = open ? it.name.replace("low ", "").replace("high ", "") : it.name.split(" / ")[0];
+    $("#sub").textContent = open ? it.prompt : (it.name.includes("/") ? it.name + " — " : "") + "on the " + D.STRING_LABEL[it.string];
+    $("#round").textContent = `${q.n} / ${ROUNDS}`;
+    $("#prompt").className = "prompt"; $("#fb").textContent = mic.ctx ? "Listening…" : "Find it, play it, then tap “Got it”.";
+    clearInterval(clockT);
+    clockT = setInterval(() => {
+      const ms = performance.now() - q.t0; $("#clock").textContent = (ms / 1000).toFixed(1) + " s";
+      if (ms > TIMEOUT) answer(false, "Time's up");
+    }, 100);
+  }
+  function onNote(m) {
+    const it = q.cur, ok = D.noteMatches(m, it.midi);
+    if (ok) return answer(true);
+    q.wrong = true;
+    $("#prompt").className = "prompt wrong";
+    $("#fb").textContent = `Heard ${D.midiName(m)} — not ${it.name.split(" / ")[0]}. Try again.`;
+  }
+  function answer(ok, why) {
+    const it = q.cur; if (!it) return;
+    q.cur = null; clearInterval(clockT);
+    const ms = performance.now() - q.t0, s = q.stats[it.key] = q.stats[it.key] || { seen: 0, miss: 0, ms: 0 };
+    s.seen++; s.ms += Math.min(ms, TIMEOUT);
+    const clean = ok && !q.wrong;
+    if (!clean) { s.miss++; q.missed.push(it.prompt); }
+    if (clean) q.firstTry++;
+    if (ok) q.times.push(ms);
+    F.store.set(statKey, q.stats);
+    $("#prompt").className = "prompt " + (ok ? "right" : "wrong");
+    $("#fb").textContent = ok ? `✓ ${(ms / 1000).toFixed(1)} s${q.wrong ? " (after a wrong note)" : ""}` : `${why || "Skipped"} — it's ${where(it)}.`;
+    setTimeout(() => { if (q && !q.done) next(); }, ok ? 700 : 1800);
+  }
+  function finish() {
+    q.done = true; clearInterval(clockT);
+    $("#start").hidden = false; $("#start").textContent = "Again"; $("#skip").hidden = true; $("#got").hidden = true;
+    const pct = Math.round(q.firstTry / ROUNDS * 100), avg = q.times.length ? q.times.reduce((a, b) => a + b, 0) / q.times.length / 1000 : null;
+    const avgTxt = avg != null ? `avg ${avg.toFixed(1)} s` : "no correct answers";
+    F.history(ex.id).add({ group: mic.ctx ? "mic" : "self-check", score: pct, text: `${q.firstTry}/${ROUNDS} · ${avgTxt}` });
+    F.resultCard($("#result"), {
+      headline: `<em>${q.firstTry}/${ROUNDS}</em> first try`,
+      line: `${pct}% · ${avgTxt}${q.missed.length ? " · work on: " + [...new Set(q.missed)].slice(0, 4).join("; ") : ""}`,
+      copy: `Grade ${ex.grade} · Note finder · ${ex.title} · ${q.firstTry}/${ROUNDS} · ${avgTxt}`,
+      onAgain: start,
+    });
+    $("#big").textContent = "✓"; $("#sub").textContent = "Done."; $("#fb").textContent = "";
+    renderHist();
+  }
+  $("#start").addEventListener("click", start);
+  $("#skip").addEventListener("click", () => answer(false, "Skipped"));
+  $("#got").addEventListener("click", () => answer(true));
+  function renderHist() { F.renderHistory($("#hist"), ex, { fmt: r => r.score + "%" }); }
+  window.addEventListener("hashchange", () => location.reload());
+  renderHist();
+})();
+</script>
+</body>
+</html>

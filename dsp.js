@@ -480,10 +480,64 @@
     return [0, 12, -12].some(k => Math.abs(midiFloat - (target + k)) <= tol) ? (Math.abs(midiFloat - target) <= tol ? "exact" : "octave") : null;
   }
 
+
+  // ---------- note finder ----------
+  const STRING_LABEL = { 6: "6th string (low E)", 5: "5th string (A)", 4: "4th string (D)", 3: "3rd string (G)", 2: "2nd string (B)", 1: "1st string (high e)" };
+  const FLAT_NAMES = ["C", "D♭", "D", "E♭", "E", "F", "G♭", "G", "A♭", "A", "B♭", "B"];
+  const SHARP_NAMES = ["C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A♯", "B"];
+  const tabMidi = (string, fret) => OPEN[6 - string] + fret;
+  // Prompt items for a note-finder exercise. Each: {key, string, fret, midi, name, prompt}
+  function noteItems(p) {
+    if (p.mode === "open") return [6, 5, 4, 3, 2, 1].map(s => {
+      const midi = tabMidi(s, 0), name = s === 6 ? "low E" : s === 1 ? "high e" : SHARP_NAMES[midi % 12];
+      return { key: "o" + s, string: s, fret: 0, midi, name, prompt: `Play the open ${name} string` };
+    });
+    const out = [];
+    p.strings.forEach(s => { for (let f = 0; f <= p.maxFret; f++) {
+      const midi = tabMidi(s, f), pc = midi % 12, natural = SHARP_NAMES[pc].length === 1;
+      if (!natural && !p.accidentals) continue;
+      const name = natural ? SHARP_NAMES[pc] : `${SHARP_NAMES[pc]} / ${FLAT_NAMES[pc]}`;
+      // the same note at fret 0 and 12 on one string is two different items (octave apart)
+      out.push({ key: `s${s}f${f}`, string: s, fret: f, midi, name, prompt: `${name} on the ${STRING_LABEL[s]}` });
+    } });
+    return out;
+  }
+  // Adaptive pick: notes you missed or were slow on come up more often. stats: {key: {seen, miss, ms}}.
+  function pickNext(items, stats, rnd, lastKey) {
+    const w = items.map(it => {
+      const s = stats[it.key] || { seen: 0, miss: 0, ms: 0 };
+      if (it.key === lastKey && items.length > 1) return 0;
+      const avg = s.seen ? s.ms / s.seen : 0;
+      return 1 + 3 * s.miss / Math.max(1, s.seen) + (s.seen ? 0 : 0.5) + Math.min(1.5, Math.max(0, (avg - 3000) / 2000));
+    });
+    let r = (rnd || Math.random)() * w.reduce((a, b) => a + b, 0);
+    for (let i = 0; i < items.length; i++) { r -= w[i]; if (r <= 0) return items[i]; }
+    return items[items.length - 1];
+  }
+
+  // ---------- riff / scale follow ----------
+  // Follows a note sequence. push(midiFloat) -> {result: "hit"|"wrong", index (next expected), done, mistakes}.
+  function createFollower(targets, tolCents) {
+    let i = 0, mistakes = 0;
+    return {
+      get index() { return i; }, get mistakes() { return mistakes; },
+      push(m) {
+        if (i >= targets.length) return { result: "done", index: i, done: true, mistakes };
+        if (noteMatches(m, targets[i], tolCents)) { i++; return { result: "hit", index: i, done: i === targets.length, mistakes }; }
+        // a re-detection of the note just played (still ringing) isn't a mistake
+        if (i > 0 && noteMatches(m, targets[i - 1], tolCents)) return { result: "repeat", index: i, done: false, mistakes };
+        mistakes++;
+        return { result: "wrong", index: i, done: false, mistakes };
+      },
+      reset() { i = 0; mistakes = 0; },
+    };
+  }
+
   const api = { C, hzToBin, rms, dbToMag, l2normalize, cosine, fft, blackman, magnitudeSpectrum,
     spectralFlux, chroma, tonality, averageVectors, createOnsetDetector, createStrumAnalyzer, classify, createChangeCounter,
     createFluxOnsetDetector, patternTimes, matchHits, timingStats, median,
-    NOTE_NAMES, OPEN, midiName, shapeMidis, idealChroma, chordCheck, yin, hzToMidi, createNoteTracker, noteMatches };
+    NOTE_NAMES, OPEN, midiName, shapeMidis, idealChroma, chordCheck, yin, hzToMidi, createNoteTracker, noteMatches,
+    STRING_LABEL, SHARP_NAMES, FLAT_NAMES, tabMidi, noteItems, pickNext, createFollower };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   if (root) root.FretDSP = api;
 })(typeof window !== "undefined" ? window : typeof globalThis !== "undefined" ? globalThis : null);

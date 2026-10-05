@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Riff and Scale Follow</title>
+<meta name="description" content="Play a short tab drill or scale pattern; the mic follows you note by note and times clean runs.">
+<meta name="theme-color" content="#0c0c0c">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@700;800&family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;600&display=swap">
+<link rel="stylesheet" href="common.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='5' cy='8' r='4' fill='%23d0142c'/%3E%3Ccircle cx='12' cy='8' r='3' fill='%23f5c518'/%3E%3C/svg%3E">
+<style>
+.seqs { display: flex; flex-wrap: wrap; gap: 8px; }
+.seqs .chip { font: 600 .95rem var(--f-body); }
+.tabwrap { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--r); background: var(--panel-2); -webkit-overflow-scrolling: touch; }
+.tabwrap svg { display: block; max-width: none; }
+.tab line { stroke: #4a4a4a; stroke-width: 1; }
+.tab .sn { fill: var(--grey); font: 600 11px var(--f-mono); }
+.tab .n rect { fill: var(--panel-2); }
+.tab .n text { fill: var(--ink); font: 600 15px var(--f-mono); }
+.tab .n.done text { fill: #5a5a55; }
+.tab .n.cur rect { fill: var(--yellow); }
+.tab .n.cur text { fill: var(--black); }
+.tab .n.bad rect { fill: var(--red); }
+.livebar { display: flex; flex-wrap: wrap; gap: 18px; font: .95rem var(--f-mono); }
+.livebar b { display: block; font: 800 2rem/1 var(--f-display); color: var(--yellow); }
+.runs { font: .85rem var(--f-mono); list-style: none; padding: 0; margin: 0; }
+.runs li { padding: 4px 0; border-bottom: 1px solid var(--line); }
+</style>
+</head>
+<body>
+<main class="wrap">
+  <section class="intro" id="intro"></section>
+  <div class="stack">
+    <section class="panel" aria-labelledby="h-s">
+      <header><h2 id="h-s"><span class="step">01</span>Drill</h2></header>
+      <div class="seqs" id="seqs" role="group" aria-label="Drill"></div>
+      <div class="tabwrap" id="tabwrap"></div>
+      <p class="small muted">Tab: the top line is the high e string and the bottom line is low E. Numbers are frets. Play left to right, one note at a time.</p>
+    </section>
+    <section class="panel" aria-labelledby="h-mic">
+      <header><h2 id="h-mic"><span class="step">02</span>Input</h2></header>
+      <div id="mic" class="stack"></div>
+    </section>
+    <section class="panel" aria-labelledby="h-r">
+      <header><h2 id="h-r"><span class="step">03</span>Play</h2></header>
+      <div class="livebar" id="live" aria-live="polite"></div>
+      <p class="fb mono small" id="fb" aria-live="polite">Enable the microphone, then press Start.</p>
+      <div class="row"><button type="button" class="btn red big" id="start" disabled>Start</button><button type="button" class="btn ghost" id="stop" hidden>Finish</button></div>
+      <ul class="runs" id="runs"></ul>
+      <div id="result"></div>
+    </section>
+    <section class="panel" aria-labelledby="h-hist">
+      <header><h2 id="h-hist">History</h2></header>
+      <div id="hist"></div>
+    </section>
+  </div>
+</main>
+<script src="dsp.js"></script>
+<script src="chords.js"></script>
+<script src="lessons.js"></script>
+<script src="exercises.js"></script>
+<script src="common.js"></script>
+<script>
+(function () {
+  "use strict";
+  const D = FretDSP, $ = F.$, esc = F.esc;
+  const hit = F.exerciseFromHash("follow"), ex = hit ? hit.ex : F.firstExercise("follow", F.grade());
+  F.chrome("practice", () => { location.href = "index.html"; });
+  F.exerciseIntro($("#intro"), ex);
+  const seqs = ex.params.sequences;
+  let si = Math.max(0, Math.min(seqs.length - 1, +(hit && hit.extra) || 0));
+  const mic = new F.Mic();
+  let tracker = null, follower = null, sess = null, tick = null;
+  const targets = () => seqs[si].tab.map(([s, f]) => D.tabMidi(s, f));
+
+  function drawTab(cur, bad) {
+    const tab = seqs[si].tab, dx = 34, x0 = 30, w = x0 + tab.length * dx + 10, y = s => 14 + (s - 1) * 18;
+    let svg = `<svg class="tab" width="${w}" height="${y(6) + 16}" role="img" aria-label="Tab: ${esc(tab.map(([s, f]) => `string ${s} fret ${f}`).join(", "))}">`;
+    ["e", "B", "G", "D", "A", "E"].forEach((n, i) => { svg += `<text class="sn" x="6" y="${y(i + 1) + 4}">${n}</text><line x1="22" x2="${w - 4}" y1="${y(i + 1)}" y2="${y(i + 1)}"/>`; });
+    tab.forEach(([s, f], i) => {
+      const cls = i < cur ? "done" : i === cur ? (bad ? "cur bad" : "cur") : "";
+      const x = x0 + i * dx + dx / 2, wd = String(f).length > 1 ? 24 : 16;
+      svg += `<g class="n ${cls}"><rect x="${x - wd / 2}" y="${y(s) - 10}" width="${wd}" height="20" rx="3"/><text x="${x}" y="${y(s) + 5}" text-anchor="middle">${f}</text></g>`;
+    });
+    $("#tabwrap").innerHTML = svg + "</svg>";
+    const c = $("#tabwrap .n.cur");
+    if (c) { const box = $("#tabwrap"), cx = c.getBBox().x; if (cx < box.scrollLeft + 40 || cx > box.scrollLeft + box.clientWidth - 60) box.scrollLeft = Math.max(0, cx - box.clientWidth / 3); }
+  }
+  function renderSeqs() {
+    $("#seqs").innerHTML = seqs.map((q, i) => `<button type="button" class="chip" data-i="${i}" aria-pressed="${i === si}">${esc(q.name)}</button>`).join("");
+    drawTab(sess ? follower.index : -1);
+    history.replaceState(null, "", "#" + ex.id + (si ? "/" + si : ""));
+    renderHist();
+  }
+  $("#seqs").addEventListener("click", e => { const b = e.target.closest("[data-i]"); if (!b || sess) return; si = +b.dataset.i; renderSeqs(); });
+
+  F.micPanel($("#mic"), mic, {
+    onReady() {
+      mic.needTime = true;
+      tracker = D.createNoteTracker({ minRms: mic.floor });
+      if (!mic._hooked) { mic._hooked = true; mic.on(onFrame); }
+      $("#start").disabled = false; $("#fb").textContent = "Ready. Press Start, then play from the first note.";
+    },
+  });
+  function onFrame(fr) {
+    if (!fr.time || !tracker || !sess) return;
+    tracker.opts.minRms = mic.floor;
+    const r = D.yin(fr.time, fr.sampleRate);
+    const n = tracker.feed({ hz: r && r.hz, aperiodicity: r ? r.aperiodicity : 1, rms: D.rms(fr.time.subarray(fr.time.length - 1024)), t: fr.t });
+    if (n) onNote(D.hzToMidi(n.hz));
+  }
+  function onNote(m) {
+    const res = follower.push(m);
+    if (res.result === "hit" && !sess.t0) sess.t0 = performance.now();
+    if (res.result === "wrong") $("#fb").textContent = `Heard ${D.midiName(m)}, expected ${D.midiName(targets()[follower.index])}.`;
+    else if (res.result === "hit") $("#fb").textContent = res.done ? "" : `✓ ${D.midiName(m)}`;
+    drawTab(follower.index, res.result === "wrong");
+    if (res.done) {
+      const ms = performance.now() - sess.t0;
+      sess.runs.push({ ms, mistakes: follower.mistakes });
+      $("#runs").innerHTML = sess.runs.map((r, i) => `<li>Run ${i + 1}: ${(r.ms / 1000).toFixed(1)} s · ${r.mistakes ? r.mistakes + " slip" + (r.mistakes > 1 ? "s" : "") : "clean"}</li>`).join("");
+      $("#fb").textContent = follower.mistakes ? `Done with ${follower.mistakes} slip(s). Go again from the start.` : `Clean run: ${(ms / 1000).toFixed(1)} s. Go again from the start.`;
+      follower.reset(); sess.t0 = 0; drawTab(0);
+    }
+    paintLive();
+  }
+  function paintLive() {
+    if (!sess) return;
+    const clean = sess.runs.filter(r => !r.mistakes), best = clean.length ? Math.min(...clean.map(r => r.ms)) : null;
+    const t = sess.t0 ? (performance.now() - sess.t0) / 1000 : 0;
+    $("#live").innerHTML = `<span><b>${follower.index}/${targets().length}</b>notes</span><span><b>${t.toFixed(1)} s</b>this run</span><span><b>${follower.mistakes}</b>slips</span><span><b>${best != null ? (best / 1000).toFixed(1) + " s" : "—"}</b>best clean</span>`;
+  }
+  $("#start").addEventListener("click", () => {
+    follower = D.createFollower(targets());
+    sess = { runs: [], t0: 0 }; if (tracker) tracker.reset();
+    $("#start").hidden = true; $("#stop").hidden = false; $("#result").innerHTML = ""; $("#runs").innerHTML = "";
+    $("#fb").textContent = "Play the highlighted note. The timer starts on your first correct note.";
+    drawTab(0); paintLive(); tick = setInterval(paintLive, 200);
+  });
+  $("#stop").addEventListener("click", () => {
+    if (!sess) return;
+    clearInterval(tick);
+    const s = sess; sess = null;
+    $("#start").hidden = false; $("#start").textContent = "Again"; $("#stop").hidden = true;
+    drawTab(-1);
+    const clean = s.runs.filter(r => !r.mistakes), name = seqs[si].name;
+    if (!s.runs.length) { $("#fb").textContent = "No complete runs yet."; return; }
+    const best = clean.length ? Math.min(...clean.map(r => r.ms)) : null;
+    if (best != null) F.history(ex.id).add({ group: name, score: Math.round(best), text: `${(best / 1000).toFixed(1)} s · ${clean.length}/${s.runs.length} clean` });
+    F.resultCard($("#result"), {
+      headline: best != null ? `Best clean run <em>${(best / 1000).toFixed(1)} s</em>` : `<em>${s.runs.length}</em> run${s.runs.length > 1 ? "s" : ""}, none clean yet`,
+      line: `${name} · ${clean.length}/${s.runs.length} clean · ${s.runs.reduce((a, r) => a + r.mistakes, 0)} slips in total`,
+      copy: `Grade ${ex.grade} · Riff & scale follow · ${name} · ` + (best != null ? `best clean run ${(best / 1000).toFixed(1)} s (${s.runs.length} runs)` : `${s.runs.length} runs, no clean run yet`),
+    });
+    renderHist();
+  });
+  function renderHist() { F.renderHistory($("#hist"), ex, { fmt: r => (r.score / 1000).toFixed(1) + " s" }); }
+  window.addEventListener("hashchange", () => location.reload());
+  renderSeqs();
+})();
+</script>
+</body>
+</html>

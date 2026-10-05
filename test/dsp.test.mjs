@@ -43,7 +43,7 @@ console.log(`Constants: K=${C.SENSITIVITY_K} FLUX_MIN=${C.FLUX_MIN} REFRACTORY=$
 console.log("\n(a) calibrate (3 strums) then classify 40 strums per chord");
 const TRIALS = 40;
 let tonMin = 1;
-for (const pair of [["A", "D"], ["C", "G"], ["Am", "Em"], ["E", "Em"]]) {
+for (const pair of [["A", "D"], ["C", "G"], ["Am", "Em"], ["E", "Em"], ["C", "Fmaj7"], ["F", "C"], ["Bm", "D"]]) {
   const templates = {};
   for (const ch of pair) {
     const vs = [];
@@ -141,7 +141,7 @@ for (const [label, trem] of [["plain sustain", 0], ["sustain with 5 Hz 15% tremo
 }
 
 // Other suites share this runner so `node test/dsp.test.mjs` runs everything.
-for (const f of ["timing", "check", "pitch", "data"]) { const m = await import(`./${f}.test.mjs`); await m.run(check); }
+for (const f of ["timing", "check", "pitch", "notes", "data"]) { const m = await import(`./${f}.test.mjs`); await m.run(check); }
 
 console.log(failures ? `\n${failures} check(s) failed` : "\nAll checks passed");
 process.exit(failures ? 1 : 0);
