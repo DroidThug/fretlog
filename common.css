@@ -93,7 +93,7 @@ label.field { display: flex; flex-direction: column; gap: 4px; font-size: .85rem
 .card h3 a::after { content: ""; position: absolute; inset: 0; }
 .card .best { font: 800 1.6rem/1.05 var(--f-display); color: var(--yellow); }
 .card .lessons { display: flex; flex-wrap: wrap; gap: 6px; position: relative; z-index: 1; }
-.card .lessons a { font-size: .8rem; color: var(--grey); border: 1px solid var(--line); border-radius: 999px; padding: 6px 10px; text-decoration: none; min-height: 32px; display: inline-flex; align-items: center; }
+.card .lessons a { font-size: .8rem; color: var(--grey); border: 1px solid var(--line); border-radius: 999px; padding: 6px 12px; text-decoration: none; min-height: 44px; display: inline-flex; align-items: center; }
 .card .lessons a:hover { color: var(--ink); border-color: var(--grey); }
 .tag { font: 600 .7rem var(--f-mono); letter-spacing: .1em; text-transform: uppercase; color: var(--red); }
 

@@ -80,11 +80,11 @@ All signal processing is in `dsp.js`. It is written as pure functions and small 
   - A chord tone below half its ideal share is reported as quiet.
   - It is pinned on a specific string only when that pitch class is unique in the shape *and* is not a harmonic of another string. For example, C's G string is also the 3rd harmonic of C, so a strum can't prove it rang.
   - Unexpected strong non-chord notes are reported as possible buzzes or wrong frets.
-- **String-by-string mode** is the real per-string check. YIN pitch detection runs on 2048-sample frames. A note must hold 3 frames before it counts, and a repeated note counts again after a gap or a fresh attack. Each string is accepted within ±40 cents, or exactly an octave off to allow for YIN slips on a weak low-E fundamental.
+- **String-by-string mode** is the real per-string check. YIN pitch detection runs on 2048-sample frames. A note must hold 3 frames before it counts, and a repeated note counts again after a gap or a fresh attack. Each string is accepted within ±40 cents, or exactly an octave off to allow for YIN slips on a weak low-E fundamental (this tolerance is only used here).
 
 ### Note finder and riff/scale follow
 
-These use the same YIN pitch path and note tracker. The note finder picks prompts adaptively: notes you missed or were slow on come up more often, and these stats are kept per exercise. The follower moves through the tab when the expected note is heard. Re-detecting the note that is still ringing is ignored, and anything else counts as a slip. A run is clean when it has no slips and is timed from its first correct note.
+These use the same YIN pitch path and note tracker. Matching is octave-exact (±40 cents), so the open low E doesn't count for the 12th fret. The note finder picks prompts adaptively: notes you missed or were slow on come up more often, and these stats are kept per exercise. The follower moves through the tab when the expected note is heard. Re-detecting the note that is still ringing is ignored, and anything else counts as a slip. A run is clean when it has no slips and is timed from its first correct note.
 
 ## Tests
 
@@ -102,7 +102,7 @@ Signals are synthesised: guitar-like strums and plucks built from the real notes
 | Changes: simulated 60 s A/D run with gaps and a noise burst | 18 of 18 changes counted; burst → unclear (held across 6 seeds) |
 | Changes: one strum + 6 s sustain (± tremolo) | exactly 1 onset; 5 s of room noise → 0 |
 | Timing, **tap** | latency 24.6 ms estimated (25 ms true); mean and SD within 0.4 ms of truth; misses/extras exact |
-| Timing, **mic (beta)** | mean within ~2–8 ms of truth and 0–10 misses per scenario, but SD inflated (20–48 ms vs 8–30 true) and about 2–3 extra onsets per strum during ring-out. Reported as **XFAIL**, not hidden. Click bleed alone → 0 onsets. |
+| Timing, **mic (beta)** | mean within 0.4–9.4 ms of truth and 0–10 misses per scenario, but SD inflated (18–48 ms vs 8–30 true) and 0.7–3.4 extra onsets per strum during ring-out. Reported as **XFAIL**, not hidden. Click bleed alone → 0 onsets. |
 | Chord check | all 18 chords score 0.89–0.98 on full strums; 4/180 false flags; a muted, unmasked string (Am's B string) named 10/10; masked strings (C's G, E's G, D's high e) can't be named from a strum (reported as INFO); Am played for C scores 0.77 vs 0.96 |
 | YIN | 111/111 tones E2–E5 within 3.5 cents, also with a −20 dB fundamental; low E with a −26 dB fundamental → 82.56 Hz |
 | Note tracker / follower | repeated notes re-counted; pentatonic pattern 1 clean (23/23); one inserted wrong fret → 1 slip; low-string drill clean |

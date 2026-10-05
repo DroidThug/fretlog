@@ -274,7 +274,7 @@
       line: `${tempo} · mean ${F.minus(st.mean)} ms (${verdict}) · spread ${Math.round(st.sd)} ms · ${st.hits}/${r.expected.length} hits · ${st.misses} missed · ${m.extras} extra · ${mode === "mic" ? "mic" : "tap"}`,
       copy, onAgain: () => start(false),
     });
-    F.history(ex.id).add({ group: tempo, score: st.inTimePct, mean: Math.round(st.mean), sd: Math.round(st.sd), mode, text: `${st.inTimePct}% · mean ${F.minus(st.mean)} ms · ±${Math.round(st.sd)}` });
+    F.history(ex.id).add({ group: tempo + (mode === "mic" ? " · mic beta" : ""), score: st.inTimePct, mean: Math.round(st.mean), sd: Math.round(st.sd), mode, text: `${st.inTimePct}% · mean ${F.minus(st.mean)} ms · ±${Math.round(st.sd)}` });
     renderHist();
   }
   $("#start").addEventListener("click", () => start(false));

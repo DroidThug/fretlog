@@ -154,7 +154,7 @@
     const i = session.target;
     if (i < 0 || i > 5) return;
     const want = D.shapeMidis(CH.CHORDS[chord])[i];
-    const m = D.hzToMidi(n.hz), ok = D.noteMatches(m, want);
+    const m = D.hzToMidi(n.hz), ok = D.noteMatches(m, want, undefined, true);
     session.marks[i] = ok ? "ok" : "bad";
     session.heard.push(`${CH.STRING_NAMES[i]}: ${ok ? "✓ " + D.midiName(want) : "heard " + D.midiName(m) + ", wanted " + D.midiName(want)}`);
     let k = i + 1; while (k < 6 && session.marks[k] === "x") k++;

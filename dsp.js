@@ -474,12 +474,15 @@
     };
   }
 
-  // Does a played note match the target? Within tol cents, or exactly an octave off (YIN octave slip on weak fundamentals).
-  function noteMatches(midiFloat, target, tolCents) {
+  // Does a played note match the target within tol cents? Returns "exact" | "octave" | null.
+  // allowOctave also accepts exactly an octave off (YIN can slip on a very weak fundamental); only chord-check
+  // pluck mode uses it, where a string can't sound in another octave anyway. Note finder and follow are octave-exact.
+  function noteMatches(midiFloat, target, tolCents, allowOctave) {
     const tol = (tolCents ?? C.PITCH_TOL_CENTS) / 100;
-    return [0, 12, -12].some(k => Math.abs(midiFloat - (target + k)) <= tol) ? (Math.abs(midiFloat - target) <= tol ? "exact" : "octave") : null;
+    if (Math.abs(midiFloat - target) <= tol) return "exact";
+    if (allowOctave && [12, -12].some(k => Math.abs(midiFloat - (target + k)) <= tol)) return "octave";
+    return null;
   }
-
 
   // ---------- note finder ----------
   const STRING_LABEL = { 6: "6th string (low E)", 5: "5th string (A)", 4: "4th string (D)", 3: "3rd string (G)", 2: "2nd string (B)", 1: "1st string (high e)" };

@@ -15,7 +15,7 @@ export function run(check) {
       addPluck(buf, midi, 0, { cents, fundamentalGain: fg, amp: uni(0.08, 0.2) });
       const r = D.yin(buf.subarray(Math.round(SR * 0.15), Math.round(SR * 0.15) + FR), SR);
       n++;
-      const m = r ? D.hzToMidi(r.hz) : -99, kind = D.noteMatches(m, midi + cents / 100, 10);
+      const m = r ? D.hzToMidi(r.hz) : -99, kind = D.noteMatches(m, midi + cents / 100, 10, true);
       if (kind === "exact") { exact++; maxErr = Math.max(maxErr, Math.abs(m - midi - cents / 100) * 100); } else if (kind === "octave") octave++; else wrong++;
     }
     console.log(`  ${label}: E2..E5 x 3 detunings (${n} tones): exact ${exact}, octave slips ${octave}, wrong ${wrong}, max error ${maxErr.toFixed(1)} cents`);
@@ -27,7 +27,9 @@ export function run(check) {
     const buf = new Float32Array(SR * 0.5); addNoise(buf, 0.002); addPluck(buf, 40, 0, { fundamentalGain: 0.05 });
     const r = D.yin(buf.subarray(SR * 0.2, SR * 0.2 + FR), SR);
     console.log(`  low E 82.41 Hz, fundamental -26 dB: ${r.hz.toFixed(2)} Hz`);
-    check(D.noteMatches(D.hzToMidi(r.hz), 40) != null, "low E with a very weak fundamental is accepted as E2 (or its octave)");
+    check(D.noteMatches(D.hzToMidi(r.hz), 40) === "exact", "low E with a very weak fundamental is heard as E2 (octave-exact)");
+    // octave-exact matching for note finder / follow: E2 is not "E, 6th string, fret 12" and E3 is not the open low E
+    check(D.noteMatches(40, 52) === null && D.noteMatches(52, 40) === null && D.noteMatches(52, 40, undefined, true) === "octave", "note finder/follow are octave-exact; only pluck mode tolerates an octave slip");
   }
   // note tracker on a short line with a repeated note re-plucked
   {
