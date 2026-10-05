@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Fretlog Exercise</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='5' cy='8' r='4' fill='%23d0142c'/%3E%3Ccircle cx='12' cy='8' r='3' fill='%23f5c518'/%3E%3C/svg%3E">
 <style>body{background:#0c0c0c;color:#f3f3ef;font:16px system-ui,sans-serif;padding:24px 16px}a{color:#f5c518}</style>
 </head>
 <body>
@@ -11,7 +12,8 @@
 <script src="exercises.js"></script>
 <script>
 (function () {
-  var parts = decodeURIComponent(location.hash.slice(1)).split("/"), ex = FretExercises.byId(parts[0]);
+  var raw = location.hash.slice(1), dec; try { dec = decodeURIComponent(raw); } catch (e) { dec = raw; }
+  var parts = dec.split("/"), ex = FretExercises.byId(parts[0]);
   if (ex && FretExercises.ENGINES[ex.engine].ready) location.replace(FretExercises.pageFor(ex) + (parts[1] ? "/" + encodeURIComponent(parts.slice(1).join("/")) : ""));
   else location.replace("index.html");
 })();

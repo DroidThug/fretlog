@@ -56,16 +56,19 @@
   const embed = id => "https://www.youtube-nocookie.com/embed/" + encodeURIComponent(id) + "?rel=0&playsinline=1";
   const findLesson = h => L.ALL.find(l => l.slug === h) || L.ALL.find(l => l.yt && l.yt === h) || null;
 
+  // A hash naming a lesson is authoritative: it decides the grade (set silently, keeping the hash).
+  const hashLesson = () => { const h = F.safeDecode(location.hash.slice(1)); return h ? findLesson(h) : null; };
   function current() {
-    const h = decodeURIComponent(location.hash.slice(1));
-    const l = h && findLesson(h);
-    if (l) { if (l.grade !== F.grade()) { F.setGrade(l.grade); F.$$(".seg [data-g]").forEach(b => b.setAttribute("aria-pressed", String(+b.dataset.g === l.grade))); } return l; }
+    const l = hashLesson();
+    if (l) return l;
     const g = F.grade(), last = findLesson(F.store.get("lesson", ""));
     if (last && last.grade === g) return last;
     return L.ALL.find(x => x.grade === g) || null;
   }
 
   function render() {
+    const hl = hashLesson();
+    if (hl && hl.grade !== F.grade()) F.setGrade(hl.grade, true);
     const g = F.grade(), info = L.GRADES[g];
     document.title = `Fretlog Lessons · Grade ${g}`;
     if (!info.modules) {

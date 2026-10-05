@@ -79,7 +79,7 @@
   function renderChord() {
     $("#chords").innerHTML = ex.params.chords.map(c => `<button type="button" class="chip" data-c="${esc(c)}" aria-pressed="${c === chord}">${esc(CH.label(c))}</button>`).join("");
     $("#diagram").innerHTML = F.chordSVG(chord);
-    $("#barre").innerHTML = CH.BARRE[chord] ? `<p class="note">Barre chords: if one string is dead, it's usually under the barre. Use string-by-string mode to find which one.</p>` : "";
+    $("#barre").innerHTML = F.has(CH.BARRE, chord) ? `<p class="note">Barre chords: if one string is dead, it's usually under the barre. Use string-by-string mode to find which one.</p>` : "";
     $("#modehelp").textContent = mode === "strum"
       ? `Strum ${CH.label(chord)} ${STRUMS} times, letting each one ring. Every strum is compared with how the chord should sound, so no calibration is needed.`
       : "Pluck each string on its own, from the lowest one that should sound up to high e. Strings marked × are skipped.";

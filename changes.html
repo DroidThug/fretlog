@@ -116,13 +116,13 @@
   "use strict";
   const D = FretDSP, CH = FretChords, EX = FretExercises, $ = F.$, esc = F.esc;
 
-  const pairOf = s => { const m = String(s || "").split(/[–-]/); return m.length === 2 && CH.CHORDS[m[0]] && CH.CHORDS[m[1]] && m[0] !== m[1] ? m : null; };
+  const pairOf = CH.parsePair;
   const pairName = ([a, b]) => `${CH.label(a)}–${CH.label(b)}`;
 
   // ----- which exercise / pair -----
   let ex, pair;
   {
-    const h = decodeURIComponent(location.hash.slice(1));
+    const h = F.safeDecode(location.hash.slice(1));
     const hit = F.exerciseFromHash("changes");
     if (hit) { ex = hit.ex; pair = pairOf(hit.extra); }
     else if (pairOf(h)) { // legacy "#A-D"
@@ -141,8 +141,8 @@
   const mic = new F.Mic();
   let analyzer = null, calib = null, run = null, duration = 60;
   const tplAll = () => { const t = F.store.get("tpl", {}); return t && typeof t === "object" ? t : {}; };
-  const templates = () => { const t = tplAll()[mic.deviceKey] || {}; const o = {}; pair.forEach(c => { if (Array.isArray(t[c]) && t[c].length === 12) o[c] = t[c]; }); return o; };
-  const saveTemplate = (chord, v) => { const all = tplAll(); (all[mic.deviceKey] = all[mic.deviceKey] || {})[chord] = v.map(x => +x.toFixed(4)); F.store.set("tpl", all); };
+  const templates = () => { const t = F.has(tplAll(), mic.deviceKey) ? tplAll()[mic.deviceKey] || {} : {}; const o = {}; pair.forEach(c => { if (Array.isArray(t[c]) && t[c].length === 12) o[c] = t[c]; }); return o; };
+  const saveTemplate = (chord, v) => { const all = tplAll(); (all[mic.deviceKey] = F.has(all, mic.deviceKey) && all[mic.deviceKey] || {})[chord] = v.map(x => +x.toFixed(4)); F.store.set("tpl", all); };
 
   // ----- pair UI -----
   function renderPair() {
@@ -150,7 +150,7 @@
     const opts = sel => gradeChords.map(k => `<option value="${esc(k)}"${k === sel ? " selected" : ""}>${esc(CH.label(k))}</option>`).join("");
     $("#c1").innerHTML = opts(pair[0]); $("#c2").innerHTML = opts(pair[1]);
     $("#duo").innerHTML = pair.map(c => `<div class="diagram" data-c="${esc(c)}">${F.chordSVG(c)}</div>`).join("");
-    const barre = pair.some(c => CH.BARRE[c]) || ex.params.barreNote;
+    const barre = pair.some(c => F.has(CH.BARRE, c)) || ex.params.barreNote;
     $("#barre").innerHTML = barre ? `<p class="note">Barre chords are harder to tell apart by ear: expect more “unclear” strums, and use the manual tap as backup.</p>` : "";
     history.replaceState(null, "", "#" + ex.id + "/" + encodeURIComponent(pair.join("-")));
     renderCalib(); renderHist();

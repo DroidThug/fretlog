@@ -19,7 +19,14 @@
 
   // ---------- grade ----------
   F.grade = () => { const g = +F.store.get("grade", 1); return g === 2 || g === 3 ? g : 1; };
-  F.setGrade = g => { F.store.set("grade", g); window.dispatchEvent(new CustomEvent("fret:grade", { detail: g })); };
+  // silent: store and update the switch without firing fret:grade (used when a deep link decides the grade)
+  F.setGrade = (g, silent) => {
+    F.store.set("grade", g);
+    F.$$(".top .seg [data-g]").forEach(b => b.setAttribute("aria-pressed", String(+b.dataset.g === g)));
+    if (!silent) window.dispatchEvent(new CustomEvent("fret:grade", { detail: g }));
+  };
+  F.safeDecode = CH.safeDecode;
+  F.has = CH.has;
 
   // ---------- chrome: top bar + footer ----------
   // active: "learn" | "practice". onGrade(g): optional override (engine pages jump to the hub).
@@ -52,10 +59,10 @@
 
   // ---------- exercises / lessons ----------
   F.lessonHref = slug => "learn.html#" + encodeURIComponent(slug);
-  F.lessonTitle = slug => (LS.BY_SLUG[slug] || {}).title || slug;
+  F.lessonTitle = slug => (CH.has(LS.BY_SLUG, slug) ? LS.BY_SLUG[slug].title : slug);
   // Exercise from the URL hash "#<id>" or "#<id>/<extra>". Returns {ex, extra} or null.
   F.exerciseFromHash = function (engine) {
-    const h = decodeURIComponent(location.hash.slice(1));
+    const h = F.safeDecode(location.hash.slice(1));
     const [id, ...rest] = h.split("/");
     const ex = EX.byId(id);
     if (ex && ex.engine === engine) return { ex, extra: rest.join("/") };
@@ -72,8 +79,8 @@
   // ---------- chord diagrams ----------
   F.chordLabel = CH.label;
   F.chordSVG = function (name) {
+    if (!CH.has(CH.CHORDS, name)) return "";
     const f = CH.CHORDS[name];
-    if (!f) return "";
     const fretted = f.filter(v => v > 0), lowF = fretted.length ? Math.min(...fretted) : 1, highF = fretted.length ? Math.max(...fretted) : 1;
     const base = highF > 4 ? lowF : 1, rows = 4;
     const W = 120, H = 156, x0 = 22, y0 = 44, sw = 15.2, fh = 24;
@@ -85,7 +92,7 @@
     else s += `<text x="${x0 - 6}" y="${y0 + fh * .65}" text-anchor="end" fill="#8a8a84" font-size="10" font-family="IBM Plex Mono, monospace">${base}fr</text>`;
     for (let i = 0; i < 6; i++) s += `<line x1="${x0 + i * sw}" y1="${y0}" x2="${x0 + i * sw}" y2="${y0 + fh * rows}" stroke="#8a8a84" stroke-width="1.2"/>`;
     for (let j = 1; j <= rows; j++) s += `<line x1="${x0}" y1="${y0 + j * fh}" x2="${x0 + sw * 5}" y2="${y0 + j * fh}" stroke="#3a3a3a" stroke-width="1.5"/>`;
-    const b = CH.BARRE[name];
+    const b = CH.has(CH.BARRE, name) ? CH.BARRE[name] : null;
     if (b) { const y = y0 + (b.fret - base + .5) * fh; s += `<rect x="${x0 + b.from * sw - 6}" y="${y - 6}" width="${(b.to - b.from) * sw + 12}" height="12" rx="6" fill="#d0142c"/>`; }
     f.forEach((v, i) => {
       const x = x0 + i * sw;

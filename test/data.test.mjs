@@ -17,5 +17,9 @@ export function run(check) {
   check(!missing.length, `every chord used has a shape ${missing.join(" ")}`);
   check(Object.keys(CH.CHORDS).every(k => /^[A-Za-z0-9#]+$/.test(k)), "chord keys have no spaces, dashes or parentheses");
   check(L.ALL.every(l => !l.yt || /^[A-Za-z0-9_-]{11}$/.test(l.yt)), `${L.ALL.length} Grade 1 lessons, video ids well-formed`);
+  check(CH.safeDecode("%E0%A4%A") === "%E0%A4%A" && CH.safeDecode("A%E2%80%93D") === "A–D", "safeDecode falls back to the raw string on malformed escapes");
+  check(CH.parsePair("constructor-toString") === null && CH.parsePair("A-valueOf") === null && CH.parsePair("A-D").join() === "A,D" && CH.parsePair("Em–C").join() === "Em,C" && CH.parsePair("A-A") === null,
+    "parsePair only accepts own chord keys (no inherited names like constructor)");
+  check(CH.label("constructor") === "constructor" && CH.label("rockG") === "G (rock)", "chord labels ignore inherited keys");
   check(L.GRADES[2].modules === null && L.GRADES[3].modules === null, "Grade 2/3 lesson data is not invented");
 }

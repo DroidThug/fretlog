@@ -18,8 +18,13 @@
   const BARRE = { F: { fret: 1, from: 0, to: 5 }, Bm: { fret: 2, from: 1, to: 5 }, "F#m": { fret: 2, from: 0, to: 5 }, Bb: { fret: 1, from: 1, to: 5 } };
   const OPEN_MIDI = [40, 45, 50, 55, 59, 64]; // E2 A2 D3 G3 B3 E4
   const STRING_NAMES = ["low E", "A", "D", "G", "B", "high e"];
-  const label = k => LABEL[k] || k;
-  const api = { CHORDS, LABEL, BARRE, OPEN_MIDI, STRING_NAMES, label };
+  const has = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
+  const label = k => (has(LABEL, k) ? LABEL[k] : k);
+  // decodeURIComponent that never throws (malformed escapes in a URL hash fall back to the raw string)
+  const safeDecode = s => { try { return decodeURIComponent(s); } catch (e) { return String(s); } };
+  // "A-D" / "A–D" -> ["A","D"] when both are distinct known chords (own keys only), else null
+  const parsePair = s => { const m = String(s || "").split(/[–-]/); return m.length === 2 && has(CHORDS, m[0]) && has(CHORDS, m[1]) && m[0] !== m[1] ? m : null; };
+  const api = { CHORDS, LABEL, BARRE, OPEN_MIDI, STRING_NAMES, label, has, safeDecode, parsePair };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   if (root) root.FretChords = api;
 })(typeof window !== "undefined" ? window : typeof globalThis !== "undefined" ? globalThis : null);
