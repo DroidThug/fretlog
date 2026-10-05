@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Chord Check</title>
+<meta name="description" content="Strum a chord and see whether every note rings, or pluck it string by string.">
+<meta name="theme-color" content="#0c0c0c">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@700;800&family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;600&display=swap">
+<link rel="stylesheet" href="common.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='5' cy='8' r='4' fill='%23d0142c'/%3E%3Ccircle cx='12' cy='8' r='3' fill='%23f5c518'/%3E%3C/svg%3E">
+<style>
+.chords { display: flex; flex-wrap: wrap; gap: 8px; }
+.stage-row { display: grid; grid-template-columns: minmax(140px, 220px) 1fr; gap: 20px; align-items: start; }
+@media (max-width: 560px) { .stage-row { grid-template-columns: 1fr; } .stage-row .diagram { max-width: 220px; } }
+.strings { display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px; margin-top: 6px; }
+.strings span { text-align: center; font: 600 .8rem/1.2 var(--f-mono); padding: 6px 0; border: 1px solid var(--line); border-radius: 4px; color: var(--grey); }
+.strings span b { display: block; font: 800 1.2rem/1 var(--f-display); color: var(--ink); }
+.strings span.ok { border-color: var(--yellow); } .strings span.ok b { color: var(--yellow); }
+.strings span.bad { border-color: var(--red); } .strings span.bad b { color: var(--red); }
+.strings span.now { background: var(--ink); } .strings span.now, .strings span.now b { color: var(--black); }
+.score { font: 800 clamp(4rem, 18vw, 7rem)/.9 var(--f-display); color: var(--yellow); font-variant-numeric: tabular-nums; }
+.score.low { color: var(--red); }
+.verdict { font: 800 1.5rem var(--f-display); text-transform: uppercase; }
+.findings { margin: 0; padding-left: 1.1em; display: flex; flex-direction: column; gap: 4px; }
+.pips { display: flex; gap: 6px; } .pips i { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--grey); } .pips i.on { background: var(--yellow); border-color: var(--yellow); }
+</style>
+</head>
+<body>
+<main class="wrap">
+  <section class="intro" id="intro"></section>
+  <div class="stack">
+    <section class="panel" aria-labelledby="h-c">
+      <header><h2 id="h-c"><span class="step">01</span>Chord</h2></header>
+      <div class="chords" id="chords" role="group" aria-label="Chord"></div>
+      <div class="row"><div class="field">Mode<div class="seg" role="group" aria-label="Mode" id="mode">
+        <button type="button" data-m="strum" aria-pressed="true">Strum</button><button type="button" data-m="pluck" aria-pressed="false">String by string</button></div></div></div>
+      <p class="small muted" id="modehelp"></p>
+      <div id="barre"></div>
+    </section>
+    <section class="panel" aria-labelledby="h-mic">
+      <header><h2 id="h-mic"><span class="step">02</span>Input</h2></header>
+      <div id="mic" class="stack"></div>
+    </section>
+    <section class="panel" aria-labelledby="h-l">
+      <header><h2 id="h-l"><span class="step">03</span>Listen</h2><button type="button" class="btn ghost sm" id="restart">Restart</button></header>
+      <div class="stage-row">
+        <div><div class="diagram" id="diagram"></div><div class="strings" id="strings" aria-live="polite"></div></div>
+        <div class="stack" id="out" aria-live="polite"></div>
+      </div>
+      <div id="result"></div>
+    </section>
+    <section class="panel" aria-labelledby="h-hist">
+      <header><h2 id="h-hist">History</h2></header>
+      <div id="hist"></div>
+    </section>
+  </div>
+</main>
+<script src="dsp.js"></script>
+<script src="chords.js"></script>
+<script src="lessons.js"></script>
+<script src="exercises.js"></script>
+<script src="common.js"></script>
+<script>
+(function () {
+  "use strict";
+  const D = FretDSP, CH = FretChords, $ = F.$, esc = F.esc;
+  const hit = F.exerciseFromHash("check"), ex = hit ? hit.ex : F.firstExercise("check", F.grade());
+  F.chrome("practice", () => { location.href = "index.html"; });
+  F.exerciseIntro($("#intro"), ex);
+  const STRUMS = 5;
+  let chord = ex.params.chords.includes(hit && hit.extra) ? hit.extra : ex.params.chords[0];
+  let mode = "strum", session = null;
+  const mic = new F.Mic();
+  let analyzer = null, tracker = null;
+
+  function renderChord() {
+    $("#chords").innerHTML = ex.params.chords.map(c => `<button type="button" class="chip" data-c="${esc(c)}" aria-pressed="${c === chord}">${esc(CH.label(c))}</button>`).join("");
+    $("#diagram").innerHTML = F.chordSVG(chord);
+    $("#barre").innerHTML = CH.BARRE[chord] ? `<p class="note">Barre chords: if one string is dead, it's usually under the barre. Use string-by-string mode to find which one.</p>` : "";
+    $("#modehelp").textContent = mode === "strum"
+      ? `Strum ${CH.label(chord)} ${STRUMS} times, letting each one ring. Every strum is compared with how the chord should sound, so no calibration is needed.`
+      : "Pluck each string on its own, from the lowest one that should sound up to high e. Strings marked × are skipped.";
+    history.replaceState(null, "", "#" + ex.id + "/" + encodeURIComponent(chord));
+    reset();
+  }
+  function reset() {
+    const mids = D.shapeMidis(CH.CHORDS[chord]);
+    session = { scores: [], marks: mids.map(m => m == null ? "x" : null), target: mids.findIndex(m => m != null), heard: [] };
+    if (tracker) tracker.reset();
+    $("#result").innerHTML = "";
+    $("#out").innerHTML = mic.ctx ? `<p class="muted">${mode === "strum" ? `Strum ${esc(CH.label(chord))}.` : "Pluck the highlighted string."}</p>` : `<p class="muted">Enable the microphone to start.</p>`;
+    paintStrings();
+  }
+  function paintStrings() {
+    const shape = CH.CHORDS[chord];
+    $("#strings").innerHTML = shape.map((f, i) => {
+      const mk = session.marks[i], cls = mk === "ok" ? "ok" : mk === "bad" ? "bad" : mode === "pluck" && i === session.target && mic.ctx ? "now" : "";
+      const sym = mk === "x" ? "×" : mk === "ok" ? "✓" : mk === "bad" ? "✗" : String(f);
+      return `<span class="${cls}" title="${esc(CH.STRING_NAMES[i])} string"><b>${sym}</b>${esc(CH.STRING_NAMES[i].replace("high ", "").replace("low ", ""))}</span>`;
+    }).join("");
+  }
+  $("#chords").addEventListener("click", e => { const b = e.target.closest("[data-c]"); if (b) { chord = b.dataset.c; renderChord(); } });
+  $("#mode").addEventListener("click", e => { const b = e.target.closest("[data-m]"); if (!b) return; mode = b.dataset.m; F.$$("#mode [data-m]").forEach(x => x.setAttribute("aria-pressed", String(x === b))); renderChord(); });
+  $("#restart").addEventListener("click", reset);
+
+  F.micPanel($("#mic"), mic, {
+    sensitivity: true,
+    onReady() {
+      mic.needSpectrum = true; mic.needTime = true;
+      analyzer = D.createStrumAnalyzer({ sampleRate: mic.ctx.sampleRate, fftSize: mic.an.fftSize, noiseFloor: mic.floor, k: mic.k });
+      tracker = D.createNoteTracker({ minRms: mic.floor });
+      if (!mic._hooked) { mic._hooked = true; mic.on(onFrame); }
+      reset();
+    },
+  });
+  function onFrame(fr) {
+    if (mode === "strum" && fr.mag && analyzer) {
+      analyzer.detector.opts.noiseFloor = mic.floor; analyzer.detector.opts.k = mic.k;
+      analyzer.feed(fr).forEach(ev => { if (ev.type === "strum") onStrum(ev.chroma); });
+    }
+    if (mode === "pluck" && fr.time && tracker) {
+      tracker.opts.minRms = mic.floor;
+      const r = D.yin(fr.time, fr.sampleRate);
+      const n = tracker.feed({ hz: r && r.hz, aperiodicity: r ? r.aperiodicity : 1, rms: D.rms(fr.time.subarray(fr.time.length - 1024)), t: fr.t });
+      if (n) onNote(n);
+    }
+  }
+
+  function verdict(s) { return s >= D.C.CHECK_GOOD ? "Clean" : s >= 0.8 ? "Close" : "Check your fingers"; }
+  function onStrum(chroma) {
+    if (session.scores.length >= STRUMS) return;
+    const r = D.chordCheck(chroma, CH.CHORDS[chord]);
+    session.scores.push(r.score);
+    const items = r.weak.map(w => w.string != null
+      ? `<li><b>${esc(w.name)}</b> is quiet — the ${esc(CH.STRING_NAMES[w.string])} string may be muted or buzzing.</li>`
+      : `<li><b>${esc(w.name)}</b> is quiet — a string playing ${esc(w.name)} may not be ringing.</li>`)
+      .concat(r.extra.map(x => `<li>Unexpected <b>${esc(x.name)}</b> — a buzz, or a finger on the wrong fret?</li>`));
+    const pct = Math.round(r.score * 100);
+    $("#out").innerHTML = `<div class="pips" aria-label="${session.scores.length} of ${STRUMS} strums">${Array.from({ length: STRUMS }, (_, i) => `<i class="${i < session.scores.length ? "on" : ""}"></i>`).join("")}</div>
+      <div><span class="score${r.score < 0.8 ? " low" : ""}">${pct}%</span><p class="verdict">${verdict(r.score)}</p></div>
+      ${items.length ? `<ul class="findings">${items.join("")}</ul>` : `<p class="muted">Every note of ${esc(CH.label(chord))} is there.</p>`}
+      <p class="small muted">Some notes are hidden by other strings' overtones, so “every note is there” can still miss a muted string. String-by-string mode checks each string on its own.</p>`;
+    if (session.scores.length === STRUMS) {
+      const avg = Math.round(session.scores.reduce((a, b) => a + b, 0) / STRUMS * 100);
+      F.history(ex.id).add({ group: CH.label(chord), score: avg, text: `${avg}% match (strum)` });
+      F.resultCard($("#result"), { headline: `${esc(CH.label(chord))} · <em>${avg}%</em> match`, line: `${STRUMS} strums · average ${avg}% · best ${Math.round(Math.max(...session.scores) * 100)}% · ${verdict(avg / 100)}`, copy: `Grade ${ex.grade} · Chord check · ${CH.label(chord)} · ${avg}% match (${STRUMS} strums)`, onAgain: reset });
+      renderHist();
+    }
+  }
+  function onNote(n) {
+    const i = session.target;
+    if (i < 0 || i > 5) return;
+    const want = D.shapeMidis(CH.CHORDS[chord])[i];
+    const m = D.hzToMidi(n.hz), ok = D.noteMatches(m, want);
+    session.marks[i] = ok ? "ok" : "bad";
+    session.heard.push(`${CH.STRING_NAMES[i]}: ${ok ? "✓ " + D.midiName(want) : "heard " + D.midiName(m) + ", wanted " + D.midiName(want)}`);
+    let k = i + 1; while (k < 6 && session.marks[k] === "x") k++;
+    session.target = k;
+    paintStrings();
+    $("#out").innerHTML = `<ul class="findings mono small">${session.heard.map(h => `<li>${esc(h)}</li>`).join("")}</ul>` +
+      (k < 6 ? `<p class="muted">Now the ${esc(CH.STRING_NAMES[k])} string.</p>` : "");
+    if (k >= 6) {
+      const total = session.marks.filter(x => x === "ok" || x === "bad").length, good = session.marks.filter(x => x === "ok").length;
+      const pct = Math.round(good / total * 100);
+      F.history(ex.id).add({ group: CH.label(chord) + " · strings", score: pct, text: `${good}/${total} strings clean` });
+      F.resultCard($("#result"), { headline: `${esc(CH.label(chord))} · <em>${good}/${total}</em> strings clean`, line: good === total ? "Every string rings true." : "Strings marked ✗ gave a different note: check that finger's fret, and that it isn't touching the next string.", copy: `Grade ${ex.grade} · Chord check · ${CH.label(chord)} · ${good}/${total} strings clean`, onAgain: reset });
+      renderHist();
+    }
+  }
+  function renderHist() { F.renderHistory($("#hist"), ex, { fmt: r => r.score + "%" }); }
+  window.addEventListener("hashchange", () => { const h = F.exerciseFromHash("check"); if (!h || h.ex.id !== ex.id) location.reload(); });
+  renderChord(); renderHist();
+})();
+</script>
+</body>
+</html>

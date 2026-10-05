@@ -141,7 +141,7 @@ for (const [label, trem] of [["plain sustain", 0], ["sustain with 5 Hz 15% tremo
 }
 
 // Other suites share this runner so `node test/dsp.test.mjs` runs everything.
-for (const f of ["timing", "data"]) { const m = await import(`./${f}.test.mjs`); await m.run(check); }
+for (const f of ["timing", "check", "pitch", "data"]) { const m = await import(`./${f}.test.mjs`); await m.run(check); }
 
 console.log(failures ? `\n${failures} check(s) failed` : "\nAll checks passed");
 process.exit(failures ? 1 : 0);

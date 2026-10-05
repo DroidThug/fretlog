@@ -33,6 +33,17 @@
     TF_MEDIAN_MS: 120,
     CLICK_HZ: 2500,        // metronome click pitch; flux ignores CLICK_HZ ± CLICK_NOTCH_HZ so click bleed isn't a strum
     CLICK_NOTCH_HZ: 400,
+    // --- chord check ---
+    IDEAL_HARMONICS: 6,    // ideal chroma: each string's partials 1..6, weighted h^-0.5 (matches the sqrt peak compression)
+    CHECK_GOOD: 0.9,       // match score shown as "clean"
+    WEAK_RATIO: 0.5,       // a chord tone below this fraction of its ideal share is "weak"
+    EXTRA_LEVEL: 0.3,      // a non-chord pitch class above this (normalised) is an "unexpected note"
+    // --- pitch (YIN) ---
+    YIN_THRESHOLD: 0.15,
+    YIN_MIN_HZ: 70, YIN_MAX_HZ: 1100,
+    PITCH_MAX_APERIODICITY: 0.25, // frames noisier than this are ignored
+    PITCH_STABLE_FRAMES: 3,       // a note must hold this many frames (~60 ms) before it counts
+    PITCH_TOL_CENTS: 40,
     TIMING_TOL_MS: 40,     // a hit within ±this of the beat counts as "in time"
     TIMING_WINDOW_MS: 150, // the furthest an onset can be from an expected hit and still be matched to it
     CHROMA_POWER: 0.5,     // peak-magnitude compression (0.5 = sqrt)
@@ -365,9 +376,114 @@
 
   function median(a) { if (!a.length) return 0; const s = a.slice().sort((x, y) => x - y), m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; }
 
+
+  // ---------- chord check ----------
+  const OPEN = [40, 45, 50, 55, 59, 64];
+  const NOTE_NAMES = ["C", "C♯", "D", "E♭", "E", "F", "F♯", "G", "A♭", "A", "B♭", "B"];
+  const midiName = m => NOTE_NAMES[((Math.round(m) % 12) + 12) % 12] + (Math.floor(Math.round(m) / 12) - 1);
+  const shapeMidis = shape => shape.map((f, i) => f < 0 ? null : OPEN[i] + f);
+
+  // Expected chroma for a chord shape in standard tuning (no calibration needed).
+  function idealChroma(shape) {
+    const out = new Array(12).fill(0);
+    shapeMidis(shape).forEach(m => {
+      if (m == null) return;
+      for (let h = 1; h <= C.IDEAL_HARMONICS; h++) {
+        const pc = ((Math.round(m + 12 * Math.log2(h)) % 12) + 12) % 12;
+        out[pc] += Math.pow(h, -0.5);
+      }
+    });
+    return l2normalize(out);
+  }
+
+  // Compare a strum's chroma with the shape's ideal. Returns {score, weak:[{pc, name, string|null}], extra:[{pc,name}]}.
+  // A weak pitch class is pinned on a string only when no other string in the shape plays it. Even then, other
+  // strings' harmonics can fill it in (C's 3rd harmonic is G), so a missing flag doesn't prove the string rang:
+  // string-by-string mode is the real per-string check.
+  function chordCheck(ch, shape) {
+    const ideal = idealChroma(shape), score = cosine(ch, ideal);
+    const mids = shapeMidis(shape), tones = {};
+    mids.forEach((m, i) => { if (m != null) (tones[m % 12] = tones[m % 12] || []).push(i); });
+    const weak = [], extra = [];
+    Object.keys(tones).forEach(k => {
+      const pc = +k;
+      if (ch[pc] >= ideal[pc] * C.WEAK_RATIO) return;
+      // masked: the pitch class is also a harmonic of another string, so its weakness can't be pinned on one string
+      const masked = mids.some((m, j) => m != null && m % 12 !== pc && [2, 3, 4, 5, 6].some(h => Math.round(m + 12 * Math.log2(h)) % 12 === pc));
+      weak.push({ pc, name: NOTE_NAMES[pc], string: tones[pc].length === 1 && !masked ? tones[pc][0] : null });
+    });
+    for (let pc = 0; pc < 12; pc++) if (!tones[pc] && ideal[pc] < 0.15 && ch[pc] > C.EXTRA_LEVEL) extra.push({ pc, name: NOTE_NAMES[pc] });
+    return { score, weak, extra, ideal };
+  }
+
+  // ---------- pitch: YIN ----------
+  // Returns {hz, aperiodicity} or null. buf: time-domain samples (2048 at 48 kHz covers low E).
+  function yin(buf, sampleRate, opts) {
+    const o = Object.assign({ minHz: C.YIN_MIN_HZ, maxHz: C.YIN_MAX_HZ, threshold: C.YIN_THRESHOLD }, opts || {});
+    const tauMax = Math.min(Math.floor(sampleRate / o.minHz), Math.floor(buf.length / 2)), tauMin = Math.max(2, Math.floor(sampleRate / o.maxHz));
+    const W = buf.length - tauMax, d = new Float64Array(tauMax + 1);
+    for (let tau = 1; tau <= tauMax; tau++) {
+      let s = 0;
+      for (let j = 0; j < W; j++) { const x = buf[j] - buf[j + tau]; s += x * x; }
+      d[tau] = s;
+    }
+    // cumulative mean normalised difference
+    const c = new Float64Array(tauMax + 1); c[0] = 1;
+    let run = 0;
+    for (let tau = 1; tau <= tauMax; tau++) { run += d[tau]; c[tau] = run > 0 ? d[tau] * tau / run : 1; }
+    let tau = -1;
+    for (let t = tauMin; t <= tauMax; t++) {
+      if (c[t] < o.threshold) { while (t + 1 <= tauMax && c[t + 1] < c[t]) t++; tau = t; break; }
+    }
+    if (tau < 0) { // no dip below threshold: take the global minimum, flagged by its aperiodicity
+      let best = tauMin; for (let t = tauMin; t <= tauMax; t++) if (c[t] < c[best]) best = t;
+      tau = best;
+    }
+    if (tau <= tauMin || tau >= tauMax) return null;
+    const a = c[tau - 1], b = c[tau], e = c[tau + 1], den = a - 2 * b + e;
+    const t = den !== 0 ? tau + 0.5 * (a - e) / den : tau;
+    return { hz: sampleRate / t, aperiodicity: b };
+  }
+  const hzToMidi = hz => 69 + 12 * Math.log2(hz / 440);
+
+  // Turns per-frame pitch into note events. feed({hz, aperiodicity, rms, t}) -> {midi, cents, hz, t} | null.
+  // A repeated note counts again after a gap or a fresh attack (level jump).
+  function createNoteTracker(opts) {
+    const o = Object.assign({ stable: C.PITCH_STABLE_FRAMES, maxAp: C.PITCH_MAX_APERIODICITY, minRms: 0.003, attackRatio: 1.4 }, opts || {});
+    let cand = null, count = 0, lastEmit = null, gap = 0, fresh = true, sum = 0;
+    const lv = [];
+    return {
+      opts: o,
+      feed(f) {
+        const attack = lv.length === 3 && f.rms > Math.max(Math.min(...lv) * o.attackRatio, o.minRms * 2);
+        lv.push(f.rms); if (lv.length > 3) lv.shift();
+        const valid = f.hz && f.aperiodicity <= o.maxAp && f.rms >= o.minRms;
+        if (!valid) { count = 0; cand = null; if (++gap >= 3) fresh = true; return null; }
+        gap = 0;
+        if (attack) { fresh = true; count = 0; cand = null; }
+        const m = hzToMidi(f.hz), n = Math.round(m);
+        if (n === cand) { count++; sum += m; } else { cand = n; count = 1; sum = m; }
+        if (count === o.stable && (fresh || n !== lastEmit)) {
+          lastEmit = n; fresh = false;
+          const mm = sum / count;
+          return { midi: n, cents: Math.round((mm - n) * 100), hz: 440 * Math.pow(2, (mm - 69) / 12), t: f.t };
+        }
+        return null;
+      },
+      reset() { cand = null; count = 0; lastEmit = null; gap = 0; fresh = true; lv.length = 0; },
+    };
+  }
+
+  // Does a played note match the target? Within tol cents, or exactly an octave off (YIN octave slip on weak fundamentals).
+  function noteMatches(midiFloat, target, tolCents) {
+    const tol = (tolCents ?? C.PITCH_TOL_CENTS) / 100;
+    return [0, 12, -12].some(k => Math.abs(midiFloat - (target + k)) <= tol) ? (Math.abs(midiFloat - target) <= tol ? "exact" : "octave") : null;
+  }
+
   const api = { C, hzToBin, rms, dbToMag, l2normalize, cosine, fft, blackman, magnitudeSpectrum,
     spectralFlux, chroma, tonality, averageVectors, createOnsetDetector, createStrumAnalyzer, classify, createChangeCounter,
-    createFluxOnsetDetector, patternTimes, matchHits, timingStats, median };
+    createFluxOnsetDetector, patternTimes, matchHits, timingStats, median,
+    NOTE_NAMES, OPEN, midiName, shapeMidis, idealChroma, chordCheck, yin, hzToMidi, createNoteTracker, noteMatches };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   if (root) root.FretDSP = api;
 })(typeof window !== "undefined" ? window : typeof globalThis !== "undefined" ? globalThis : null);
