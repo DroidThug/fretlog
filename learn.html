@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Fretlog Lessons</title>
+<meta name="description" content="JustinGuitar's beginner lessons, module by module, with an embedded player and links to matching practice exercises.">
+<meta name="theme-color" content="#0c0c0c">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@700;800&family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;600&display=swap">
+<link rel="stylesheet" href="common.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='5' cy='8' r='4' fill='%23d0142c'/%3E%3Ccircle cx='12' cy='8' r='3' fill='%23f5c518'/%3E%3C/svg%3E">
+<style>
+.player { display: flex; flex-direction: column; gap: 12px; padding-top: 24px; }
+.player h1 { font-size: clamp(2rem, 7vw, 3.4rem); }
+.video { position: relative; width: 100%; aspect-ratio: 16 / 9; background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); overflow: hidden; }
+.video iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+.video .novid { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 16px; text-align: center; }
+.pn { display: flex; gap: 10px; flex-wrap: wrap; justify-content: space-between; }
+.pn .btn { flex: 1 1 140px; }
+.strip { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 240px), 1fr)); gap: 10px; }
+.strip a { display: flex; flex-direction: column; gap: 4px; padding: 12px 14px; border: 1px solid var(--line); border-left: 4px solid var(--red); border-radius: var(--r); text-decoration: none; background: var(--panel); min-height: 44px; }
+.strip a:hover { border-color: var(--grey); border-left-color: var(--yellow); }
+.strip b { font: 800 1.3rem/1 var(--f-display); text-transform: uppercase; }
+.modules { display: flex; flex-direction: column; gap: 8px; margin-top: 28px; }
+.modules details { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); }
+.modules summary { cursor: pointer; padding: 12px 16px; min-height: 44px; display: flex; align-items: center; justify-content: space-between; gap: 10px; font: 800 1.25rem/1.1 var(--f-display); text-transform: uppercase; list-style: none; }
+.modules summary::-webkit-details-marker { display: none; }
+.modules summary::after { content: "+"; color: var(--red); font-size: 1.6rem; }
+.modules details[open] summary::after { content: "−"; }
+.modules ol { margin: 0; padding: 0 8px 10px; list-style: none; counter-reset: l; }
+.modules li a { display: flex; gap: 10px; align-items: center; min-height: 44px; padding: 6px 8px; border-radius: 4px; text-decoration: none; }
+.modules li a::before { counter-increment: l; content: counter(l, decimal-leading-zero); font: .8rem var(--f-mono); color: var(--grey); }
+.modules li a:hover { background: var(--panel-2); }
+.modules li a[aria-current="true"] { background: var(--ink); color: var(--black); }
+.modules li a[aria-current="true"]::before { color: var(--black); }
+.modules li a .nv { margin-left: auto; font: .7rem var(--f-mono); color: var(--grey); }
+</style>
+</head>
+<body>
+<main class="wrap">
+  <section class="player" id="player" aria-live="polite"></section>
+  <section class="modules" id="modules" aria-label="Modules"></section>
+</main>
+<script src="dsp.js"></script>
+<script src="chords.js"></script>
+<script src="lessons.js"></script>
+<script src="exercises.js"></script>
+<script src="common.js"></script>
+<script>
+(function () {
+  "use strict";
+  const L = FretLessons, EX = FretExercises, esc = F.esc, $ = F.$;
+  F.chrome("learn");
+  const embed = id => "https://www.youtube-nocookie.com/embed/" + encodeURIComponent(id) + "?rel=0&playsinline=1";
+  const findLesson = h => L.ALL.find(l => l.slug === h) || L.ALL.find(l => l.yt && l.yt === h) || null;
+
+  function current() {
+    const h = decodeURIComponent(location.hash.slice(1));
+    const l = h && findLesson(h);
+    if (l) { if (l.grade !== F.grade()) { F.setGrade(l.grade); F.$$(".seg [data-g]").forEach(b => b.setAttribute("aria-pressed", String(+b.dataset.g === l.grade))); } return l; }
+    const g = F.grade(), last = findLesson(F.store.get("lesson", ""));
+    if (last && last.grade === g) return last;
+    return L.ALL.find(x => x.grade === g) || null;
+  }
+
+  function render() {
+    const g = F.grade(), info = L.GRADES[g];
+    document.title = `Fretlog Lessons · Grade ${g}`;
+    if (!info.modules) {
+      $("#player").innerHTML = `<p class="eyebrow">Learn · Grade ${g}</p><h1>Grade ${g}</h1><hr class="rule">
+        <p class="note">Grade ${g} lessons aren't loaded yet — ask Claude to add them.</p>
+        <p><a href="${esc(info.url)}" target="_blank" rel="noopener">Grade ${g} lessons on justinguitar.com ↗</a></p>
+        <p class="muted">Grade ${g} practice exercises are ready on the <a href="index.html">Practice</a> page.</p>`;
+      $("#modules").innerHTML = "";
+      return;
+    }
+    const l = current();
+    if (!l) return;
+    F.store.set("lesson", l.slug);
+    const list = L.ALL.filter(x => x.grade === g), i = list.indexOf(l), prev = list[i - 1], next = list[i + 1];
+    const practice = EX.EXERCISES.filter(e => EX.ENGINES[e.engine].ready && e.justinLessons.includes(l.slug));
+    $("#player").innerHTML = `
+      <p class="eyebrow">${esc(l.module)}</p>
+      <h1>${esc(l.title)}</h1>
+      <div class="video">${l.yt
+        ? `<iframe src="${esc(embed(l.yt))}" title="${esc(l.title)} — JustinGuitar lesson video" referrerpolicy="strict-origin-when-cross-origin" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" loading="lazy"></iframe>`
+        : `<div class="novid"><p>This lesson has no video here.</p><a class="btn red" href="${esc(L.lessonUrl(l.slug))}" target="_blank" rel="noopener">Read it on justinguitar.com ↗</a></div>`}</div>
+      <div class="pn">
+        <a class="btn" ${prev ? `href="#${esc(prev.slug)}"` : 'aria-disabled="true" tabindex="-1" style="opacity:.4;pointer-events:none"'}>← ${prev ? "Previous" : "Start of grade"}</a>
+        <a class="btn" ${next ? `href="#${esc(next.slug)}"` : 'aria-disabled="true" tabindex="-1" style="opacity:.4;pointer-events:none"'}>${next ? "Next" : "End of grade"} →</a>
+      </div>
+      <p><a href="${esc(L.lessonUrl(l.slug))}" target="_blank" rel="noopener">Lesson notes on justinguitar.com ↗</a></p>
+      ${practice.length ? `<div class="stack" style="gap:8px"><p class="eyebrow">Practice this</p><div class="strip">${practice.map(e =>
+        `<a href="${esc(EX.pageFor(e))}"><span class="tag">${esc(EX.ENGINES[e.engine].name)}</span><b>${esc(e.title)}</b><span class="small muted">${esc(e.blurb)}</span></a>`).join("")}</div></div>` : ""}`;
+    $("#modules").innerHTML = info.modules.map((m, mi) => {
+      const ls = list.filter(x => x.mi === mi);
+      return `<details${mi === l.mi ? " open" : ""}><summary>${esc(m[0])}</summary><ol>${ls.map(x =>
+        `<li><a href="#${esc(x.slug)}"${x === l ? ' aria-current="true"' : ""}>${esc(x.title)}${x.yt ? "" : '<span class="nv">no video</span>'}</a></li>`).join("")}</ol></details>`;
+    }).join("");
+  }
+  function go(d) {
+    const l = current(); if (!l) return;
+    const list = L.ALL.filter(x => x.grade === l.grade), n = list[list.indexOf(l) + d];
+    if (n) location.hash = n.slug;
+  }
+  document.addEventListener("keydown", e => {
+    if (e.altKey || e.metaKey || e.ctrlKey || /^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement.tagName)) return;
+    if (e.key === "ArrowLeft") go(-1); else if (e.key === "ArrowRight") go(1);
+  });
+  window.addEventListener("hashchange", () => { render(); window.scrollTo({ top: 0 }); });
+  window.addEventListener("fret:grade", () => { if (location.hash) history.replaceState(null, "", location.pathname); render(); });
+  render();
+})();
+</script>
+</body>
+</html>

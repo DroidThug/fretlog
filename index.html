@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Fretlog Practice</title>
+<meta name="description" content="Guitar practice exercises by grade, with microphone feedback: chord changes, strum timing, chord check, note finder and scale drills.">
+<meta name="theme-color" content="#0c0c0c">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@700;800&family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;600&display=swap">
+<link rel="stylesheet" href="common.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='5' cy='8' r='4' fill='%23d0142c'/%3E%3Ccircle cx='12' cy='8' r='3' fill='%23f5c518'/%3E%3C/svg%3E">
+</head>
+<body>
+<main class="wrap">
+  <section class="intro">
+    <p class="eyebrow">Practice</p>
+    <h1 id="title">Grade 1</h1>
+    <hr class="rule">
+    <p>Exercises for JustinGuitar's beginner course. Most of them listen through your microphone or amp's USB input; the sound stays in your browser.</p>
+  </section>
+  <div class="cards" id="cards"></div>
+</main>
+<script src="dsp.js"></script>
+<script src="chords.js"></script>
+<script src="lessons.js"></script>
+<script src="exercises.js"></script>
+<script src="common.js"></script>
+<script>
+(function () {
+  "use strict";
+  const EX = FretExercises, esc = F.esc;
+  F.chrome("practice");
+  // Best result line per engine, from that exercise's history.
+  const BEST = {
+    changes: r => `${r.score} changes · ${r.group}`,
+    timing: r => `${r.score}% in time · ${r.group}`,
+    check: r => `${r.score}% match · ${r.group}`,
+    notes: r => `${r.score}% · ${r.group}`,
+    follow: r => `${(r.score / 1000).toFixed(1)} s clean run`,
+  };
+  function render() {
+    const g = F.grade();
+    F.$("#title").textContent = "Grade " + g;
+    document.title = `Fretlog Practice · Grade ${g}`;
+    const list = EX.EXERCISES.filter(e => e.grade === g && EX.ENGINES[e.engine].ready);
+    F.$("#cards").innerHTML = list.map(e => {
+      const best = F.bestOf(e, F.history(e.id).list());
+      const lessons = e.justinLessons.length
+        ? e.justinLessons.slice(0, 4).map(s => `<a href="${F.lessonHref(s)}">${esc(F.lessonTitle(s))}</a>`).join("") + (e.justinLessons.length > 4 ? `<a href="${F.lessonHref(e.justinLessons[4])}">+${e.justinLessons.length - 4} more</a>` : "")
+        : "";
+      return `<article class="card">
+        <span class="tag">${esc(EX.ENGINES[e.engine].name)}</span>
+        <h3><a href="${esc(EX.pageFor(e))}">${esc(e.title)}</a></h3>
+        <p class="muted">${esc(e.blurb)}</p>
+        ${best ? `<p><span class="eyebrow">Best</span><br><span class="best">${esc(BEST[e.engine](best))}</span></p>` : `<p class="small muted">No runs yet.</p>`}
+        ${lessons ? `<div class="lessons"><span class="sr">Supports lessons:</span>${lessons}</div>` : g > 1 ? `<p class="small muted">Grade ${g} lessons aren't linked yet.</p>` : ""}
+      </article>`;
+    }).join("") || `<p class="empty">No exercises for this grade yet.</p>`;
+  }
+  window.addEventListener("fret:grade", render);
+  render();
+})();
+</script>
+</body>
+</html>

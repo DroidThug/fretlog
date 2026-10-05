@@ -1,0 +1,307 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Chord Changes Counter</title>
+<meta name="description" content="Count one-minute chord changes by ear: the microphone hears which chord you strum.">
+<meta name="theme-color" content="#0c0c0c">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@700;800&family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;600&display=swap">
+<link rel="stylesheet" href="common.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='5' cy='8' r='4' fill='%23d0142c'/%3E%3Ccircle cx='12' cy='8' r='3' fill='%23f5c518'/%3E%3C/svg%3E">
+<style>
+.pairs { display: flex; flex-wrap: wrap; gap: 8px; }
+.duo { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; max-width: 420px; }
+.calib { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr)); gap: 12px; }
+.cal { border: 1px solid var(--line); border-radius: var(--r); padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+.cal .name { font: 800 2rem/1 var(--f-display); }
+.dots { display: flex; gap: 8px; }
+.dots i { width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--grey); }
+.dots i.on { background: var(--yellow); border-color: var(--yellow); }
+.cal.ok .name::after { content: " ✓"; color: var(--yellow); }
+.cal.listening { border-color: var(--red); }
+.durs { display: inline-flex; }
+.run-row { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; }
+
+/* stage: full-screen during a run */
+.stage { position: fixed; inset: 0; z-index: 50; background: var(--black); display: flex; flex-direction: column; padding: max(12px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom)); gap: 10px; }
+.stage[hidden] { display: none; }
+.stage-top { display: flex; align-items: center; gap: 12px; justify-content: space-between; }
+.stage-top .pair { font: 800 1.8rem/1 var(--f-display); text-transform: uppercase; }
+.timer { font: 800 clamp(2.2rem, 9vw, 3.4rem)/1 var(--f-display); font-variant-numeric: tabular-nums; }
+.pad { flex: 1; min-height: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; border: 2px solid var(--line); border-radius: 12px; cursor: pointer; user-select: none; -webkit-user-select: none; touch-action: manipulation; gap: 6px; text-align: center; padding: 10px; }
+.pad:focus-visible { outline: 3px solid var(--yellow); }
+.pad .count { font: 800 clamp(7rem, 34vw, 15rem)/.85 var(--f-display); color: var(--yellow); font-variant-numeric: tabular-nums; }
+.pad .count.cd { color: var(--red); }
+.pad .lab { font: 800 1.4rem var(--f-display); text-transform: uppercase; letter-spacing: .1em; }
+.pad.unclear { border-color: var(--grey); background: #1a1a1a; }
+.pad.heard { border-color: var(--yellow); }
+.tally { font: .9rem var(--f-mono); color: var(--grey); }
+.stage-chords { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; max-width: 360px; width: 100%; margin: 0 auto; }
+@media (max-height: 640px) { .stage-chords { max-width: 240px; } }
+.hint { text-align: center; color: var(--grey); font-size: .85rem; }
+</style>
+</head>
+<body>
+<main class="wrap">
+  <section class="intro" id="intro"></section>
+  <div class="stack">
+    <section class="panel" aria-labelledby="h-pair">
+      <header><h2 id="h-pair"><span class="step">01</span>Pair</h2></header>
+      <div class="pairs" id="pairs" role="group" aria-label="Justin's pairs"></div>
+      <div class="row">
+        <label class="field">Or your own: first chord<select id="c1"></select></label>
+        <label class="field">second chord<select id="c2"></select></label>
+      </div>
+      <div class="duo" id="duo"></div>
+      <div id="barre"></div>
+    </section>
+
+    <section class="panel" aria-labelledby="h-mic">
+      <header><h2 id="h-mic"><span class="step">02</span>Input</h2></header>
+      <div id="mic" class="stack"></div>
+    </section>
+
+    <section class="panel" aria-labelledby="h-cal">
+      <header><h2 id="h-cal"><span class="step">03</span>Calibrate</h2><span class="small muted">Teaches the counter what each chord sounds like through your input.</span></header>
+      <div class="calib" id="calib"></div>
+      <p id="simline" class="small mono" aria-live="polite"></p>
+    </section>
+
+    <section class="panel" aria-labelledby="h-run">
+      <header><h2 id="h-run"><span class="step">04</span>Run</h2></header>
+      <div class="run-row">
+        <div class="seg durs" role="group" aria-label="Duration" id="durs">
+          <button type="button" data-d="30" aria-pressed="false">30s</button>
+          <button type="button" data-d="60" aria-pressed="true">60s</button>
+          <button type="button" data-d="120" aria-pressed="false">120s</button>
+        </div>
+        <button type="button" class="btn red big" id="start">Start</button>
+      </div>
+      <p class="small muted" id="runnote"></p>
+      <div id="result"></div>
+    </section>
+
+    <section class="panel" aria-labelledby="h-hist">
+      <header><h2 id="h-hist">History</h2></header>
+      <div id="hist"></div>
+    </section>
+  </div>
+</main>
+
+<section class="stage" id="stage" hidden aria-label="Run in progress">
+  <div class="stage-top">
+    <span class="pair" id="s-pair"></span>
+    <span class="timer" id="s-timer" aria-live="off">1:00</span>
+    <button type="button" class="btn ghost sm" id="s-cancel">Cancel</button>
+  </div>
+  <div class="pad" id="pad" role="button" tabindex="0" aria-label="Add one change by hand">
+    <span class="count" id="s-count">3</span>
+    <span class="lab" id="s-lab">get ready</span>
+    <span class="tally" id="s-tally"></span>
+  </div>
+  <div class="stage-chords" id="s-chords"></div>
+  <p class="hint">Tap the number or press Space to add a change by hand.</p>
+</section>
+
+<script src="dsp.js"></script>
+<script src="chords.js"></script>
+<script src="lessons.js"></script>
+<script src="exercises.js"></script>
+<script src="common.js"></script>
+<script>
+(function () {
+  "use strict";
+  const D = FretDSP, CH = FretChords, EX = FretExercises, $ = F.$, esc = F.esc;
+
+  const pairOf = s => { const m = String(s || "").split(/[–-]/); return m.length === 2 && CH.CHORDS[m[0]] && CH.CHORDS[m[1]] && m[0] !== m[1] ? m : null; };
+  const pairName = ([a, b]) => `${CH.label(a)}–${CH.label(b)}`;
+
+  // ----- which exercise / pair -----
+  let ex, pair;
+  {
+    const h = decodeURIComponent(location.hash.slice(1));
+    const hit = F.exerciseFromHash("changes");
+    if (hit) { ex = hit.ex; pair = pairOf(hit.extra); }
+    else if (pairOf(h)) { // legacy "#A-D"
+      pair = pairOf(h);
+      const key = pair.join("–");
+      ex = EX.EXERCISES.find(e => e.engine === "changes" && e.grade === F.grade() && e.params.pairs.includes(key))
+        || EX.EXERCISES.find(e => e.engine === "changes" && e.params.pairs.includes(key)) || F.firstExercise("changes", F.grade());
+    } else ex = F.firstExercise("changes", F.grade());
+    if (!pair) pair = pairOf(ex.params.pairs[0]);
+  }
+  F.chrome("practice", () => { location.href = "index.html"; });
+  F.exerciseIntro($("#intro"), ex);
+  const gradeChords = Object.keys(CH.CHORDS).filter(k => EX.EXERCISES.some(e => e.engine === "changes" && e.grade <= ex.grade && e.params.pairs.some(p => p.split("–").includes(k))));
+
+  // ----- state -----
+  const mic = new F.Mic();
+  let analyzer = null, calib = null, run = null, duration = 60;
+  const tplAll = () => { const t = F.store.get("tpl", {}); return t && typeof t === "object" ? t : {}; };
+  const templates = () => { const t = tplAll()[mic.deviceKey] || {}; const o = {}; pair.forEach(c => { if (Array.isArray(t[c]) && t[c].length === 12) o[c] = t[c]; }); return o; };
+  const saveTemplate = (chord, v) => { const all = tplAll(); (all[mic.deviceKey] = all[mic.deviceKey] || {})[chord] = v.map(x => +x.toFixed(4)); F.store.set("tpl", all); };
+
+  // ----- pair UI -----
+  function renderPair() {
+    $("#pairs").innerHTML = ex.params.pairs.map(p => `<button type="button" class="chip" data-p="${esc(p)}" aria-pressed="${p === pair.join("–")}">${esc(pairName(p.split("–")))}</button>`).join("");
+    const opts = sel => gradeChords.map(k => `<option value="${esc(k)}"${k === sel ? " selected" : ""}>${esc(CH.label(k))}</option>`).join("");
+    $("#c1").innerHTML = opts(pair[0]); $("#c2").innerHTML = opts(pair[1]);
+    $("#duo").innerHTML = pair.map(c => `<div class="diagram" data-c="${esc(c)}">${F.chordSVG(c)}</div>`).join("");
+    const barre = pair.some(c => CH.BARRE[c]) || ex.params.barreNote;
+    $("#barre").innerHTML = barre ? `<p class="note">Barre chords are harder to tell apart by ear: expect more “unclear” strums, and use the manual tap as backup.</p>` : "";
+    history.replaceState(null, "", "#" + ex.id + "/" + encodeURIComponent(pair.join("-")));
+    renderCalib(); renderHist();
+  }
+  $("#pairs").addEventListener("click", e => { const b = e.target.closest("[data-p]"); if (!b || run) return; pair = b.dataset.p.split("–"); calib = null; renderPair(); });
+  ["#c1", "#c2"].forEach((s, i) => $(s).addEventListener("change", () => {
+    if (run) return;
+    const np = pair.slice(); np[i] = $(s).value;
+    if (np[0] === np[1]) { $("#runnote").textContent = "Pick two different chords."; renderPair(); return; }
+    pair = np; calib = null; renderPair();
+  }));
+
+  // ----- calibration -----
+  function renderCalib() {
+    const t = templates(), on = !!analyzer;
+    $("#calib").innerHTML = pair.map(c => {
+      const ok = !!t[c], listening = calib && calib.chord === c, n = listening ? calib.vs.length : ok ? 3 : 0;
+      return `<div class="cal${ok && !listening ? " ok" : ""}${listening ? " listening" : ""}">
+        <span class="name">${esc(CH.label(c))}</span>
+        <div class="dots" aria-label="${n} of 3 strums">${[0, 1, 2].map(i => `<i class="${i < n ? "on" : ""}"></i>`).join("")}</div>
+        <p class="small muted">${listening ? `Strum ${esc(CH.label(c))} — ${3 - n} more, one at a time, let each ring.` : ok ? "Calibrated for this input." : `Strum ${esc(CH.label(c))} 3 times.`}</p>
+        <button type="button" class="btn${ok ? "" : " red"} sm" data-cal="${esc(c)}" ${on ? "" : "disabled"}>${listening ? "Cancel" : ok ? "Recalibrate" : `Calibrate ${esc(CH.label(c))}`}</button></div>`;
+    }).join("");
+    const s = t[pair[0]] && t[pair[1]] ? D.cosine(t[pair[0]], t[pair[1]]) : null;
+    $("#simline").innerHTML = !on ? "Enable the microphone to calibrate." : s == null ? "Calibrate both chords to let the mic count changes." :
+      `Similarity between the two: <b>${s.toFixed(2)}</b>` + (s > D.C.SIMILAR_WARN ? ` — <span style="color:var(--yellow)">these two sound very similar to the mic; results may be shaky.</span>` : " — distinct enough.");
+    $("#runnote").textContent = !on ? "No mic? You can still run it and tap to count by hand." :
+      s == null ? "Not calibrated yet: the run will count manual taps only." : "Ready. Strum each chord once per change; the mic counts the switches.";
+  }
+  $("#calib").addEventListener("click", e => {
+    const b = e.target.closest("[data-cal]"); if (!b || run) return;
+    const c = b.dataset.cal;
+    calib = calib && calib.chord === c ? null : { chord: c, vs: [] };
+    renderCalib();
+  });
+
+  // ----- mic -----
+  F.micPanel($("#mic"), mic, {
+    sensitivity: true,
+    onReady() {
+      mic.needSpectrum = true;
+      analyzer = D.createStrumAnalyzer({ sampleRate: mic.ctx.sampleRate, fftSize: mic.an.fftSize, noiseFloor: mic.floor, k: mic.k });
+      if (!mic._hooked) { mic._hooked = true; mic.on(onFrame); }
+      calib = null; renderCalib();
+    },
+  });
+  function onFrame(frame) {
+    if (!frame.mag || !analyzer) return;
+    analyzer.detector.opts.noiseFloor = mic.floor; analyzer.detector.opts.k = mic.k;
+    analyzer.feed(frame).forEach(ev => { if (ev.type === "strum") onStrum(ev); });
+  }
+  function onStrum(ev) {
+    if (calib) {
+      calib.vs.push(ev.chroma);
+      if (calib.vs.length >= 3) { saveTemplate(calib.chord, D.averageVectors(calib.vs)); calib = null; }
+      renderCalib(); return;
+    }
+    if (run && run.phase === "live") {
+      const t = templates();
+      if (!(t[pair[0]] && t[pair[1]])) { run.uncal++; flash("heard"); paintStage(); return; }
+      const r = D.classify(ev.chroma, t);
+      run.counter.push(r.chord);
+      if (r.chord) { run.current = r.chord; flash("heard"); } else flash("unclear");
+      paintStage();
+    }
+  }
+
+  // ----- run -----
+  $("#durs").addEventListener("click", e => { const b = e.target.closest("[data-d]"); if (!b) return; duration = +b.dataset.d; F.$$("#durs [data-d]").forEach(x => x.setAttribute("aria-pressed", String(x === b))); });
+  const stage = $("#stage"), pad = $("#pad");
+  function fmtT(s) { s = Math.max(0, Math.ceil(s)); return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0"); }
+  function paintStage() {
+    if (!run) return;
+    const s = run.counter.state;
+    if (run.phase === "live") {
+      $("#s-count").textContent = s.changes + run.manual; $("#s-count").classList.remove("cd");
+      $("#s-lab").textContent = "changes";
+      const t = templates(), cal = t[pair[0]] && t[pair[1]];
+      $("#s-tally").textContent = !analyzer ? `${run.manual} manual · mic off` :
+        cal ? `${s.changes} heard · ${run.manual} manual · ${s.unclear} unclear` : `${run.manual} manual · ${run.uncal} strums (not calibrated)`;
+    }
+    F.$$("#s-chords .diagram").forEach(d => d.classList.toggle("live", d.dataset.c === run.current));
+  }
+  let flashT;
+  function flash(kind) { pad.classList.remove("unclear", "heard"); void pad.offsetWidth; pad.classList.add(kind); clearTimeout(flashT); flashT = setTimeout(() => pad.classList.remove("unclear", "heard"), kind === "unclear" ? 350 : 250); }
+  function addManual() { if (run && run.phase === "live") { run.manual++; flash("heard"); paintStage(); } }
+  pad.addEventListener("pointerdown", e => { e.preventDefault(); addManual(); });
+  document.addEventListener("keydown", e => {
+    if (!run) return;
+    if (e.code === "Space" || (e.key === "Enter" && document.activeElement === pad)) { e.preventDefault(); if (!e.repeat) addManual(); }
+    if (e.key === "Escape") endRun(false);
+  });
+  $("#s-cancel").addEventListener("click", () => endRun(false));
+
+  $("#start").addEventListener("click", () => {
+    if (run) return;
+    calib = null; renderCalib();
+    run = { phase: "count", counter: D.createChangeCounter(), manual: 0, uncal: 0, current: null, dur: duration, pair: pair.slice() };
+    $("#s-pair").textContent = pairName(pair);
+    $("#s-chords").innerHTML = pair.map(c => `<div class="diagram" data-c="${esc(c)}">${F.chordSVG(c)}</div>`).join("");
+    $("#s-timer").textContent = fmtT(duration); $("#s-tally").textContent = ""; $("#s-lab").textContent = "get ready";
+    stage.hidden = false; document.body.style.overflow = "hidden"; pad.focus();
+    F.wake.on();
+    let n = 3;
+    const cd = () => {
+      if (!run) return;
+      if (n > 0) { $("#s-count").textContent = n; $("#s-count").classList.add("cd"); n--; run.cdT = setTimeout(cd, 1000); return; }
+      run.phase = "live"; run.t0 = performance.now();
+      if (analyzer) analyzer.reset();
+      paintStage();
+      run.tick = setInterval(() => {
+        const left = run.dur - (performance.now() - run.t0) / 1000;
+        $("#s-timer").textContent = fmtT(left);
+        if (left <= 0) endRun(true);
+      }, 100);
+    };
+    cd();
+  });
+
+  function endRun(done) {
+    if (!run) return;
+    clearTimeout(run.cdT); clearInterval(run.tick);
+    const r = run; run = null;
+    stage.hidden = true; document.body.style.overflow = ""; F.wake.off();
+    if (!done || r.phase !== "live") { $("#start").focus(); return; }
+    const s = r.counter.state, total = s.changes + r.manual, strums = s.clean + s.unclear;
+    const clean = strums ? Math.round(s.clean / strums * 100) : null;
+    const name = pairName(r.pair), durTxt = r.dur === 60 ? "" : ` (${r.dur} s)`;
+    const parts = [`${name} · ${total} changes` + (s.changes || r.manual ? ` (${s.changes} heard + ${r.manual} manual)` : ""), clean != null ? `${clean}% clean strums` : null, r.dur !== 60 ? `${r.dur} s` : null].filter(Boolean);
+    const line = parts.join(" · ");
+    const copyText = `${name} ${total}${durTxt}`;
+    F.history(ex.id).add({ group: name + (r.dur === 60 ? "" : ` · ${r.dur}s`), score: total, heard: s.changes, manual: r.manual, clean, dur: r.dur, text: `${total}${clean != null ? ` · ${clean}% clean` : ""}${durTxt}` });
+    $("#result").innerHTML = `<div class="result" tabindex="-1">
+      <p class="eyebrow">Result</p>
+      <p class="headline">${esc(name)} · <em>${total}</em> changes</p>
+      <p class="mono small">${esc(line)}</p>
+      <div class="row"><button type="button" class="btn red" data-copy>Copy for Fretlog</button>
+        <a class="btn" href="https://claude.ai/artifact/UxnD5gaehyATeUWixntR8b" target="_blank" rel="noopener">Open Fretlog ↗</a>
+        <button type="button" class="btn ghost" data-again>Again</button></div>
+      <div data-fallback></div></div>`;
+    const res = $("#result .result");
+    res.querySelector("[data-copy]").addEventListener("click", async e => { const ok = await F.copy(copyText, res.querySelector("[data-fallback]")); e.target.textContent = ok ? `Copied “${copyText}”` : "Select and copy below"; });
+    res.querySelector("[data-again]").addEventListener("click", () => $("#start").click());
+    res.focus();
+    renderHist();
+  }
+
+  function renderHist() { F.renderHistory($("#hist"), ex, { fmt: r => String(r.score) }); }
+  window.addEventListener("hashchange", () => { const h = F.exerciseFromHash("changes"); if (h && h.ex.id !== ex.id) location.reload(); else if (h && pairOf(h.extra) && pairOf(h.extra).join() !== pair.join()) { pair = pairOf(h.extra); renderPair(); } });
+  renderPair();
+})();
+</script>
+</body>
+</html>

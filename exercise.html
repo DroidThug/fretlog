@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fretlog Exercise</title>
+<style>body{background:#0c0c0c;color:#f3f3ef;font:16px system-ui,sans-serif;padding:24px 16px}a{color:#f5c518}</style>
+</head>
+<body>
+<p>Opening exercise… <a href="index.html">Go to Practice</a></p>
+<script src="exercises.js"></script>
+<script>
+(function () {
+  var parts = decodeURIComponent(location.hash.slice(1)).split("/"), ex = FretExercises.byId(parts[0]);
+  if (ex && FretExercises.ENGINES[ex.engine].ready) location.replace(FretExercises.pageFor(ex) + (parts[1] ? "/" + encodeURIComponent(parts.slice(1).join("/")) : ""));
+  else location.replace("index.html");
+})();
+</script>
+</body>
+</html>
