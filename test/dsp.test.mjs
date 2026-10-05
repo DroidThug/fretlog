@@ -3,7 +3,7 @@
 // pipeline is wired correctly and the constants are sane; it does NOT prove real-guitar accuracy.
 import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
-const D = require("../dsp.js");
+const D = require("../dsp.js"), CH = require("../chords.js");
 const { C } = D;
 if (process.env.DSP_OVERRIDE) Object.assign(C, JSON.parse(process.env.DSP_OVERRIDE)); // for tuning experiments
 
@@ -88,31 +88,40 @@ setSeed(+(process.env.SEED_B || 42));
     const at = t + uni(-0.15, 0.15);
     times.push(at); played.push(ch);
   }
+  const drops = [];
   times.forEach((at, i) => {
     const s0 = Math.round(at * SR);
     const next = times[i + 1];
     // 60% of the time the old chord is damped as the fingers lift; otherwise it rings into the next strum
     const beforeGap = next && next - at > 3;
     const muteAt = next && (beforeGap || uni(0, 1) < 0.6) ? Math.round(Math.min(next - 0.2, at + 2.3) * SR) : Infinity;
-    addStrum(buf, played[i], s0, { muteAt, dropString: true, maxLen: SR * 4 });
+    drops.push(addStrum(buf, played[i], s0, { muteAt, dropString: true, maxLen: SR * 4 }));
   });
   const BURST_S = 20.0; // inside the silent gap left by skipped strums 7 and 8 (someone bumps the mic)
   const burstAt = Math.round(SR * BURST_S);
   addNoise(buf, 0.05, burstAt, burstAt + Math.round(SR * 0.25));
   let expected = 0;
   for (let i = 1; i < played.length; i++) if (played[i] !== played[i - 1]) expected++;
-  const counter = D.createChangeCounter();
+  const counter = D.createChangeCounter(), allCounter = D.createChangeCounter({ countSloppy: true }), sloppyInfo = [];
   const an = newAnalyzer();
   let burstLabel = "no onset";
   analyse(buf, an, e => {
     if (e.type !== "strum") return;
     const r = D.classify(e.chroma, templates);
     if (Math.abs(e.t - BURST_S * 1000) < 300) burstLabel = r.chord || `unclear (best ${r.best} ${r.sim.toFixed(2)}, tonality ${r.tonality.toFixed(2)})`;
-    counter.push(r.chord);
+    // clean-only mode, as the page defaults to: accepted strums must also pass the clean-strum gate
+    const ok = r.chord ? D.strumQuality(e.chroma, CH.CHORDS[r.chord], C.RUN_CLEAN_MIN).ok : true;
+    if (r.chord && !ok) { const k = times.findIndex(t => Math.abs(t * 1000 - e.t) < 300); sloppyInfo.push(k >= 0 ? (drops[k].length ? "dropped " + drops[k].map(x => CH.STRING_NAMES[x]).join("+") : "nothing dropped") : "?"); }
+    allCounter.push(r.chord, ok);
+    counter.push(r.chord, ok);
   });
   const s = counter.state;
-  console.log(`  played ${played.length} strums, expected ${expected} changes · counted ${s.changes} · clean ${s.clean} · unclear ${s.unclear} · noise burst → ${burstLabel}`);
-  check(Math.abs(s.changes - expected) <= 1, `change count ${s.changes} within ±1 of ${expected}`);
+  const nDropped = drops.filter(d => d.length).length;
+  console.log(`  played ${played.length} strums (${nDropped} with a string that didn't sound), expected ${expected} changes · all-changes mode ${allCounter.state.changes} · clean-only ${s.changes} clean + ${s.sloppyChanges} sloppy · unclear ${s.unclear} · noise burst → ${burstLabel}`);
+  console.log(`  sloppy strums: ${sloppyInfo.join("; ") || "none"}`);
+  check(Math.abs(allCounter.state.changes - expected) <= 1, `all-changes mode: ${allCounter.state.changes} within ±1 of ${expected}`);
+  check(Math.abs(s.changes + s.sloppyChanges - expected) <= 1, `clean-only mode accounts for every switch: ${s.changes} clean + ${s.sloppyChanges} sloppy within ±1 of ${expected}`);
+  check(sloppyInfo.every(x => x.startsWith("dropped")), "every strum flagged sloppy really had a string that didn't sound");
   check(burstLabel.startsWith("unclear") || burstLabel === "no onset", `noise burst not labelled as a chord`);
 }
 
@@ -141,7 +150,7 @@ for (const [label, trem] of [["plain sustain", 0], ["sustain with 5 Hz 15% tremo
 }
 
 // Other suites share this runner so `node test/dsp.test.mjs` runs everything.
-for (const f of ["timing", "check", "pitch", "notes", "data"]) { const m = await import(`./${f}.test.mjs`); await m.run(check); }
+for (const f of ["calib", "timing", "check", "pitch", "notes", "data"]) { const m = await import(`./${f}.test.mjs`); await m.run(check); }
 
-console.log(failures ? `\n${failures} check(s) failed` : "\nAll checks passed (8 XFAIL: mic-mode strum timing, experimental; 3 INFO: chord-check strings masked by harmonics)");
+console.log(failures ? `\n${failures} check(s) failed` : "\nAll checks passed (8 XFAIL: mic-mode strum timing, experimental; 4 INFO: strings masked by harmonics)");
 process.exit(failures ? 1 : 0);

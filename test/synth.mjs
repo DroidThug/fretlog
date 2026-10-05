@@ -24,9 +24,10 @@ export function addStrum(buf, chord, s0, o = {}) {
   const bright = uni(0.7, 1.4), muteAt = o.muteAt ?? Infinity, maxLen = o.maxLen ?? buf.length;
   let strings = SHAPES[chord].map((f, i) => [f, i]).filter(([f]) => f >= 0);
   if (o.only) strings = strings.filter(([, i]) => o.only.includes(i));
+  const dropped = [];
   if (up) strings.reverse();
   strings.forEach(([fret, si], order) => {
-    if (o.dropString && rnd() < 0.08) return; // occasionally a string doesn't sound
+    if (o.dropString && rnd() < 0.08) { dropped.push(si); return; } // occasionally a string doesn't sound
     const f0 = mtof(OPEN[si] + fret) * Math.pow(2, uni(-8, 8) / 1200);
     const start = s0 + Math.round((order * strumMs + uni(0, 2)) * SR / 1000);
     const amp = (o.amp ?? 0.09) * vel * uni(0.6, 1.0) * (si < 2 ? 1.1 : 1);
@@ -52,6 +53,7 @@ export function addStrum(buf, chord, s0, o = {}) {
     // pick / finger noise
     for (let n = 0; n < 240; n++) if (start + n < buf.length && start + n >= 0) buf[start + n] += gauss() * 0.01 * vel * (1 - n / 240);
   });
+  return dropped;
 }
 
 export function addNoise(buf, level, from = 0, to = buf.length) {

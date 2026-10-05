@@ -38,6 +38,9 @@
     CHECK_GOOD: 0.9,       // match score shown as "clean"
     WEAK_RATIO: 0.5,       // a chord tone below this fraction of its ideal share is "weak"
     EXTRA_LEVEL: 0.3,      // a non-chord pitch class above this (normalised) is an "unexpected note"
+    // --- clean-strum gate (calibration + "clean only" counting) ---
+    CAL_MIN: 0.85,         // calibration strum must score >= this against the shape's ideal chroma (lowest clean synthetic strum: 0.88)
+    RUN_CLEAN_MIN: 0.82,   // during a run, a strum below this (or with a quiet chord tone) is "sloppy"
     // --- pitch (YIN) ---
     YIN_THRESHOLD: 0.15,
     YIN_MIN_HZ: 70, YIN_MAX_HZ: 1100,
@@ -264,22 +267,27 @@
   }
 
   // ---------- change counter ----------
-  function createChangeCounter() {
-    const s = { changes: 0, clean: 0, unclear: 0, last: null };
+  // push(chord, clean=true): chord name or null (unclear). Returns true if a counted change happened.
+  // A sloppy strum (right chord, but a quiet note / low match) is never counted as a change in clean-only mode,
+  // but it DOES become the "last chord", so the next clean strum of the other chord is still a change.
+  // countSloppy=true ("all changes" mode) counts sloppy changes too. sloppyChanges = chord switches made with a sloppy strum.
+  function createChangeCounter(opts) {
+    const o = Object.assign({ countSloppy: false }, opts || {});
+    const s = { changes: 0, clean: 0, sloppy: 0, sloppyChanges: 0, unclear: 0, last: null };
     return {
       state: s,
-      push(chord) { // chord name, or null for an unclear strum. Returns true if this was a change.
+      push(chord, clean) {
         if (!chord) { s.unclear++; return false; }
-        s.clean++;
-        const changed = s.last != null && chord !== s.last;
-        if (changed) s.changes++;
+        const isClean = clean !== false, switched = s.last != null && chord !== s.last;
         s.last = chord;
-        return changed;
+        if (isClean) { s.clean++; if (switched) s.changes++; return switched; }
+        s.sloppy++;
+        if (switched) { s.sloppyChanges++; if (o.countSloppy) { s.changes++; return true; } }
+        return false;
       },
-      reset() { s.changes = 0; s.clean = 0; s.unclear = 0; s.last = null; },
+      reset() { s.changes = 0; s.clean = 0; s.sloppy = 0; s.sloppyChanges = 0; s.unclear = 0; s.last = null; },
     };
   }
-
 
   // ---------- strum timing ----------
   // Onset detector for timing. push(chunk, startSample) takes raw samples in any chunk size and returns
@@ -416,6 +424,21 @@
     return { score, weak, extra, ideal };
   }
 
+  // Is this strum a clean version of the shape? ok = score >= min AND no chord tone is quiet.
+  // reason (when not ok): {type:"string", string, name} only when chordCheck can pin it on one string,
+  // {type:"note", name} for a quiet note it can't pin, or {type:"score"} for a generally off strum.
+  // A muted string whose note is doubled or is an overtone of another string can't be heard missing (e.g. C's G string).
+  function strumQuality(ch, shape, min) {
+    const r = chordCheck(ch, shape), m = min ?? C.CAL_MIN;
+    const ok = r.score >= m && r.weak.length === 0;
+    let reason = null;
+    if (!ok) {
+      const pinned = r.weak.find(w => w.string != null);
+      reason = pinned ? { type: "string", string: pinned.string, name: pinned.name } : r.weak.length ? { type: "note", name: r.weak[0].name } : { type: "score" };
+    }
+    return { ok, score: r.score, weak: r.weak, reason };
+  }
+
   // ---------- pitch: YIN ----------
   // Returns {hz, aperiodicity} or null. buf: time-domain samples (2048 at 48 kHz covers low E).
   function yin(buf, sampleRate, opts) {
@@ -539,7 +562,7 @@
   const api = { C, hzToBin, rms, dbToMag, l2normalize, cosine, fft, blackman, magnitudeSpectrum,
     spectralFlux, chroma, tonality, averageVectors, createOnsetDetector, createStrumAnalyzer, classify, createChangeCounter,
     createFluxOnsetDetector, patternTimes, matchHits, timingStats, median,
-    NOTE_NAMES, OPEN, midiName, shapeMidis, idealChroma, chordCheck, yin, hzToMidi, createNoteTracker, noteMatches,
+    NOTE_NAMES, OPEN, midiName, shapeMidis, idealChroma, chordCheck, strumQuality, yin, hzToMidi, createNoteTracker, noteMatches,
     STRING_LABEL, SHARP_NAMES, FLAT_NAMES, tabMidi, noteItems, pickNext, createFollower };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   if (root) root.FretDSP = api;

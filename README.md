@@ -55,6 +55,10 @@ All signal processing is in `dsp.js`. It is written as pure functions and small 
    - at least 150 ms have passed since the last onset.
 3. **Chroma.** From 60 ms to 210 ms after the onset, each frame becomes a 12-bin pitch-class profile. Only spectral peaks between 80 Hz and 2 kHz count (parabolic frequency refinement, square-root magnitude). The profiles are averaged and L2-normalised.
 4. **Calibration.** You strum each chord 3 times. The average becomes that chord's template, stored per chord and per input device.
+   - Each calibration strum must be *clean*: it scores ≥ `CAL_MIN` = 0.85 against the chord's ideal chroma (see Chord check) and no chord tone is quiet. Otherwise it doesn't count, and you're told why ("the B string may be muted" only when that can be pinned on one string).
+   - After 3 rejects in a row, "Use it anyway" stores a template flagged *rough*, with a link to Chord check for that chord.
+   - An uncalibrated chord falls back to its generic (ideal) chroma, and the page says so.
+   - Limit: a muted string whose note is doubled, or is an overtone of another string, can't be heard missing (for example C's A or G string, E's G string, G's B string). Chord check's string-by-string mode catches those.
 5. **Classification.** The strum's chroma is compared with both templates by cosine similarity. The best match is accepted only if all of these hold:
    - similarity ≥ 0.75;
    - it beats the other template by `min(0.04, 0.25 × (1 − template similarity))`;
@@ -62,6 +66,9 @@ All signal processing is in `dsp.js`. It is written as pure functions and small 
 
    Anything else is "unclear".
 6. **Counting.** A change is an accepted chord that differs from the last accepted one. Manual taps (the number pad or Space) are counted separately.
+   - **Clean only** (the default) counts a change only when the arriving strum also passes the clean gate at `RUN_CLEAN_MIN` = 0.82. A sloppy strum of the right chord isn't counted, but it does become the "last chord", so the next clean switch still counts.
+   - **All changes** counts every switch and still reports how many were sloppy.
+   - "Copy for Fretlog" uses the clean count in clean-only mode. History keeps the two modes in separate groups, so bests compare like with like.
 
 ### Strum timing
 
@@ -99,7 +106,9 @@ Signals are synthesised: guitar-like strums and plucks built from the real notes
 | Suite | Result |
 |---|---|
 | Changes: calibrate then classify, 80 strums per pair | A–D 100 %, C–G 100 %, Am–Em 98.8 %, E–Em 98.8 % (1 wrong), C–Fmaj7 100 %, F–C 100 %, Bm–D 98.8 % (1 wrong) |
-| Changes: simulated 60 s A/D run with gaps and a noise burst | 18 of 18 changes counted; burst → unclear (held across 6 seeds) |
+| Changes: simulated 60 s A/D run with gaps, dropped strings and a noise burst | all-changes mode 18 of 18 across 6 seeds; clean-only 16–18 clean + 0–2 sloppy, and every strum flagged sloppy really had a dropped string; burst → unclear |
+| Changes: calibration gate | 180/180 clean strums of all 18 chords accepted (lowest score 0.863); single muted string rejected 10/10 for Am-B, Em-G, Dm-high e, Bm-B, Fmaj7-high e, 7/10 for D-high e; 0/10 for masked or doubled notes (C-A, C-G, E-G, G-B); two muted strings: D-B+e 10/10, A-G+B 8/10, C-A+e and G-B+e 0/10; wrong chord (Am for C) 10/10 |
+| Changes: clean-only run, Em–Am with 6 switches onto a B-muted Am | 17 clean + 6 sloppy (exactly as played); all-changes mode 23/23 |
 | Changes: one strum + 6 s sustain (± tremolo) | exactly 1 onset; 5 s of room noise → 0 |
 | Timing, **tap** | latency 24.6 ms estimated (25 ms true); mean and SD within 0.4 ms of truth; misses/extras exact |
 | Timing, **mic (beta)** | mean within 0.4–9.4 ms of truth and 0–10 misses per scenario, but SD inflated (18–48 ms vs 8–30 true) and 0.7–3.4 extra onsets per strum during ring-out. Reported as **XFAIL**, not hidden. Click bleed alone → 0 onsets. |

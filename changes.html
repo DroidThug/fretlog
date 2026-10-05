@@ -22,6 +22,11 @@
 .dots i.on { background: var(--yellow); border-color: var(--yellow); }
 .cal.ok .name::after { content: " ✓"; color: var(--yellow); }
 .cal.listening { border-color: var(--red); }
+.dots i.bad { border-color: var(--red); background: var(--red); }
+.dots i { display: inline-flex; align-items: center; justify-content: center; font: 700 .65rem/1 var(--f-mono); color: var(--black); }
+.cal .why { color: var(--ink); border-left: 3px solid var(--red); padding-left: 8px; font-size: .9rem; }
+.cal .rough { border-left: 3px solid var(--yellow); padding-left: 8px; font-size: .9rem; }
+.pad.sloppy { border-color: var(--red); }
 .durs { display: inline-flex; }
 .run-row { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; }
 
@@ -78,8 +83,13 @@
           <button type="button" data-d="60" aria-pressed="true">60s</button>
           <button type="button" data-d="120" aria-pressed="false">120s</button>
         </div>
+        <div class="seg" role="group" aria-label="What counts" id="cmode">
+          <button type="button" data-m="clean" aria-pressed="true">Clean only</button>
+          <button type="button" data-m="all" aria-pressed="false">All changes</button>
+        </div>
         <button type="button" class="btn red big" id="start">Start</button>
       </div>
+      <p class="small muted">Clean only: a change counts when the new chord rings properly. A strum with a quiet or muted note is tallied as “sloppy” instead.</p>
       <p class="small muted" id="runnote"></p>
       <div id="result"></div>
     </section>
@@ -141,8 +151,28 @@
   const mic = new F.Mic();
   let analyzer = null, calib = null, run = null, duration = 60;
   const tplAll = () => { const t = F.store.get("tpl", {}); return t && typeof t === "object" ? t : {}; };
-  const templates = () => { const t = F.has(tplAll(), mic.deviceKey) ? tplAll()[mic.deviceKey] || {} : {}; const o = {}; pair.forEach(c => { if (Array.isArray(t[c]) && t[c].length === 12) o[c] = t[c]; }); return o; };
-  const saveTemplate = (chord, v) => { const all = tplAll(); (all[mic.deviceKey] = F.has(all, mic.deviceKey) && all[mic.deviceKey] || {})[chord] = v.map(x => +x.toFixed(4)); F.store.set("tpl", all); };
+  // Stored template: an array (older versions) or {v, rough}. rough = calibrated via "Use it anyway".
+  const tplEntry = c => {
+    const all = tplAll(), t = F.has(all, mic.deviceKey) ? all[mic.deviceKey] : null;
+    if (!t || typeof t !== "object" || !F.has(t, c)) return null;
+    const e = t[c], v = Array.isArray(e) ? e : e && e.v;
+    return Array.isArray(v) && v.length === 12 ? { v, rough: !!(e && e.rough) } : null;
+  };
+  // Templates for the pair; an uncalibrated chord falls back to its generic (ideal) chroma.
+  const templates = () => {
+    const t = {}, generic = [];
+    pair.forEach(c => { const e = tplEntry(c); if (e) t[c] = e.v; else { t[c] = D.idealChroma(CH.CHORDS[c]); generic.push(c); } });
+    return { t, generic };
+  };
+  const saveTemplate = (chord, v, rough) => {
+    const all = tplAll(), dev = (all[mic.deviceKey] = F.has(all, mic.deviceKey) && all[mic.deviceKey] || {});
+    dev[chord] = { v: v.map(x => +x.toFixed(4)), rough: !!rough };
+    F.store.set("tpl", all);
+  };
+  const checkHref = c => { const e = EX.EXERCISES.find(x => x.engine === "check" && x.params.chords.includes(c)); return e ? EX.pageFor(e) + "/" + encodeURIComponent(c) : null; };
+  let countMode = F.store.get("cmode", "clean") === "all" ? "all" : "clean";
+  F.$$("#cmode [data-m]").forEach(x => x.setAttribute("aria-pressed", String(x.dataset.m === countMode)));
+  $("#cmode").addEventListener("click", e => { const b = e.target.closest("[data-m]"); if (!b || run) return; countMode = b.dataset.m; F.store.set("cmode", countMode); F.$$("#cmode [data-m]").forEach(x => x.setAttribute("aria-pressed", String(x === b))); renderHist(); });
 
   // ----- pair UI -----
   function renderPair() {
@@ -164,26 +194,48 @@
   }));
 
   // ----- calibration -----
+  // Each calibration strum must be a clean version of the chord (D.strumQuality vs the shape's ideal, >= CAL_MIN,
+  // no quiet chord tone). Rejected strums don't count; after 3 rejects in a row "Use it anyway" stores a rough template.
+  function reasonText(c, q) {
+    const why = q.reason.type === "string" ? `the ${CH.STRING_NAMES[q.reason.string]} string may be muted`
+      : q.reason.type === "note" ? `${q.reason.name} is quiet, so a string may be muted` : `it doesn't quite sound like ${CH.label(c)}`;
+    return `That one sounded off — ${why}. Re-strum, letting every string ring.`;
+  }
   function renderCalib() {
-    const t = templates(), on = !!analyzer;
+    const on = !!analyzer;
     $("#calib").innerHTML = pair.map(c => {
-      const ok = !!t[c], listening = calib && calib.chord === c, n = listening ? calib.vs.length : ok ? 3 : 0;
-      return `<div class="cal${ok && !listening ? " ok" : ""}${listening ? " listening" : ""}">
+      const e = tplEntry(c), listening = calib && calib.chord === c;
+      const marks = listening ? calib.marks : e && !e.rough ? ["ok", "ok", "ok"] : [];
+      const okN = marks.filter(m => m === "ok").length;
+      const dots = marks.slice(-8).map(m => `<i class="${m === "ok" ? "on" : "bad"}" aria-hidden="true">${m === "ok" ? "✓" : "✗"}</i>`).join("") + Array.from({ length: Math.max(0, 3 - okN) }, () => "<i></i>").join("");
+      const href = checkHref(c);
+      const status = listening
+        ? (calib.why ? `<p class="why">${esc(calib.why)}</p>` : "") + `<p class="small muted">Strum ${esc(CH.label(c))} — ${3 - okN} more clean strum${3 - okN === 1 ? "" : "s"}, one at a time, letting each ring.</p>`
+          + (calib.rejectRun >= 3 ? `<div class="row"><button type="button" class="btn sm" data-anyway="${esc(c)}">Use it anyway</button>${href ? `<a class="small" href="${esc(href)}">Check ${esc(CH.label(c))} string by string ↗</a>` : ""}</div>` : "")
+        : e && e.rough ? `<p class="rough">Calibrated with a rough chord — try ${href ? `<a href="${esc(href)}">Chord check</a>` : "Chord check"} for this chord, then recalibrate.</p>`
+        : e ? `<p class="small muted">Calibrated for this input.</p>`
+        : `<p class="small muted">Using a generic ${esc(CH.label(c))} — calibrate for better accuracy.</p>`;
+      return `<div class="cal${e && !listening ? " ok" : ""}${listening ? " listening" : ""}">
         <span class="name">${esc(CH.label(c))}</span>
-        <div class="dots" aria-label="${n} of 3 strums">${[0, 1, 2].map(i => `<i class="${i < n ? "on" : ""}"></i>`).join("")}</div>
-        <p class="small muted">${listening ? `Strum ${esc(CH.label(c))} — ${3 - n} more, one at a time, let each ring.` : ok ? "Calibrated for this input." : `Strum ${esc(CH.label(c))} 3 times.`}</p>
-        <button type="button" class="btn${ok ? "" : " red"} sm" data-cal="${esc(c)}" ${on ? "" : "disabled"}>${listening ? "Cancel" : ok ? "Recalibrate" : `Calibrate ${esc(CH.label(c))}`}</button></div>`;
+        <div class="dots" aria-label="${okN} of 3 clean strums${listening ? `, ${marks.length - okN} rejected` : ""}">${dots}</div>
+        ${status}
+        <button type="button" class="btn${e ? "" : " red"} sm" data-cal="${esc(c)}" ${on ? "" : "disabled"}>${listening ? "Cancel" : e ? "Recalibrate" : `Calibrate ${esc(CH.label(c))}`}</button></div>`;
     }).join("");
-    const s = t[pair[0]] && t[pair[1]] ? D.cosine(t[pair[0]], t[pair[1]]) : null;
-    $("#simline").innerHTML = !on ? "Enable the microphone to calibrate." : s == null ? "Calibrate both chords to let the mic count changes." :
+    const { t, generic } = templates();
+    const s = D.cosine(t[pair[0]], t[pair[1]]);
+    $("#simline").innerHTML = !on ? "Enable the microphone to calibrate." :
+      (generic.length === 2 ? "Not calibrated: using generic chord shapes. " : "") +
       `Similarity between the two: <b>${s.toFixed(2)}</b>` + (s > D.C.SIMILAR_WARN ? ` — <span style="color:var(--yellow)">these two sound very similar to the mic; results may be shaky.</span>` : " — distinct enough.");
     $("#runnote").textContent = !on ? "No mic? You can still run it and tap to count by hand." :
-      s == null ? "Not calibrated yet: the run will count manual taps only." : "Ready. Strum each chord once per change; the mic counts the switches.";
+      generic.length ? `Ready (using a generic ${generic.map(CH.label).join(" and ")}). Calibrating makes counting more reliable.` : "Ready. Strum each chord once per change; the mic counts the switches.";
   }
   $("#calib").addEventListener("click", e => {
-    const b = e.target.closest("[data-cal]"); if (!b || run) return;
+    if (run) return;
+    const any = e.target.closest("[data-anyway]");
+    if (any && calib) { saveTemplate(calib.chord, D.averageVectors(calib.all), true); calib = null; renderCalib(); return; }
+    const b = e.target.closest("[data-cal]"); if (!b) return;
     const c = b.dataset.cal;
-    calib = calib && calib.chord === c ? null : { chord: c, vs: [] };
+    calib = calib && calib.chord === c ? null : { chord: c, vs: [], all: [], marks: [], rejectRun: 0, why: "" };
     renderCalib();
   });
 
@@ -204,16 +256,18 @@
   }
   function onStrum(ev) {
     if (calib) {
-      calib.vs.push(ev.chroma);
-      if (calib.vs.length >= 3) { saveTemplate(calib.chord, D.averageVectors(calib.vs)); calib = null; }
+      const q = D.strumQuality(ev.chroma, CH.CHORDS[calib.chord], D.C.CAL_MIN);
+      calib.all.push(ev.chroma);
+      if (q.ok) { calib.vs.push(ev.chroma); calib.marks.push("ok"); calib.rejectRun = 0; calib.why = ""; }
+      else { calib.marks.push("bad"); calib.rejectRun++; calib.why = reasonText(calib.chord, q); }
+      if (calib.vs.length >= 3) { saveTemplate(calib.chord, D.averageVectors(calib.vs), false); calib = null; }
       renderCalib(); return;
     }
     if (run && run.phase === "live") {
-      const t = templates();
-      if (!(t[pair[0]] && t[pair[1]])) { run.uncal++; flash("heard"); paintStage(); return; }
-      const r = D.classify(ev.chroma, t);
-      run.counter.push(r.chord);
-      if (r.chord) { run.current = r.chord; flash("heard"); } else flash("unclear");
+      const r = D.classify(ev.chroma, run.templates);
+      const q = r.chord ? D.strumQuality(ev.chroma, CH.CHORDS[r.chord], D.C.RUN_CLEAN_MIN) : null;
+      run.counter.push(r.chord, q ? q.ok : true);
+      if (r.chord) { run.current = r.chord; flash(q.ok ? "heard" : "sloppy"); } else flash("unclear");
       paintStage();
     }
   }
@@ -228,14 +282,14 @@
     if (run.phase === "live") {
       $("#s-count").textContent = s.changes + run.manual; $("#s-count").classList.remove("cd");
       $("#s-lab").textContent = "changes";
-      const t = templates(), cal = t[pair[0]] && t[pair[1]];
+      $("#s-lab").textContent = run.mode === "clean" ? "clean changes" : "changes";
       $("#s-tally").textContent = !analyzer ? `${run.manual} manual · mic off` :
-        cal ? `${s.changes} heard · ${run.manual} manual · ${s.unclear} unclear` : `${run.manual} manual · ${run.uncal} strums (not calibrated)`;
+        `${s.changes} heard · ${s.sloppyChanges} sloppy · ${run.manual} manual · ${s.unclear} unclear`;
     }
     F.$$("#s-chords .diagram").forEach(d => d.classList.toggle("live", d.dataset.c === run.current));
   }
   let flashT;
-  function flash(kind) { pad.classList.remove("unclear", "heard"); void pad.offsetWidth; pad.classList.add(kind); clearTimeout(flashT); flashT = setTimeout(() => pad.classList.remove("unclear", "heard"), kind === "unclear" ? 350 : 250); }
+  function flash(kind) { pad.classList.remove("unclear", "heard", "sloppy"); void pad.offsetWidth; pad.classList.add(kind); clearTimeout(flashT); flashT = setTimeout(() => pad.classList.remove("unclear", "heard", "sloppy"), kind === "heard" ? 250 : 350); }
   function addManual() { if (run && run.phase === "live") { run.manual++; flash("heard"); paintStage(); } }
   pad.addEventListener("pointerdown", e => { e.preventDefault(); addManual(); });
   document.addEventListener("keydown", e => {
@@ -248,7 +302,8 @@
   $("#start").addEventListener("click", () => {
     if (run) return;
     calib = null; renderCalib();
-    run = { phase: "count", counter: D.createChangeCounter(), manual: 0, uncal: 0, current: null, dur: duration, pair: pair.slice() };
+    const tp = templates();
+    run = { phase: "count", mode: countMode, counter: D.createChangeCounter({ countSloppy: countMode === "all" }), templates: tp.t, generic: tp.generic, manual: 0, current: null, dur: duration, pair: pair.slice() };
     $("#s-pair").textContent = pairName(pair);
     $("#s-chords").innerHTML = pair.map(c => `<div class="diagram" data-c="${esc(c)}">${F.chordSVG(c)}</div>`).join("");
     $("#s-timer").textContent = fmtT(duration); $("#s-tally").textContent = ""; $("#s-lab").textContent = "get ready";
@@ -276,16 +331,21 @@
     const r = run; run = null;
     stage.hidden = true; document.body.style.overflow = ""; F.wake.off();
     if (!done || r.phase !== "live") { $("#start").focus(); return; }
-    const s = r.counter.state, total = s.changes + r.manual, strums = s.clean + s.unclear;
+    const s = r.counter.state, total = s.changes + r.manual, strums = s.clean + s.sloppy + s.unclear;
     const clean = strums ? Math.round(s.clean / strums * 100) : null;
-    const name = pairName(r.pair), durTxt = r.dur === 60 ? "" : ` (${r.dur} s)`;
-    const parts = [`${name} · ${total} changes` + (s.changes || r.manual ? ` (${s.changes} heard + ${r.manual} manual)` : ""), clean != null ? `${clean}% clean strums` : null, r.dur !== 60 ? `${r.dur} s` : null].filter(Boolean);
+    const name = pairName(r.pair), durTxt = r.dur === 60 ? "" : ` (${r.dur} s)`, cleanMode = r.mode === "clean";
+    const noun = cleanMode ? "clean changes" : "changes";
+    const parts = [`${name} · ${total} ${noun}` + (r.manual ? ` (${s.changes} heard + ${r.manual} manual)` : ""),
+      analyzer ? `${s.sloppyChanges} sloppy` + (cleanMode ? "" : " (included)") : null,
+      clean != null ? `${clean}% clean strums` : null, r.dur !== 60 ? `${r.dur} s` : null,
+      r.generic.length ? `generic ${r.generic.map(CH.label).join(" + ")}` : null].filter(Boolean);
     const line = parts.join(" · ");
     const copyText = `${name} ${total}${durTxt}`;
-    F.history(ex.id).add({ group: name + (r.dur === 60 ? "" : ` · ${r.dur}s`), score: total, heard: s.changes, manual: r.manual, clean, dur: r.dur, text: `${total}${clean != null ? ` · ${clean}% clean` : ""}${durTxt}` });
+    F.history(ex.id).add({ group: name + (cleanMode ? "" : " · all changes") + (r.dur === 60 ? "" : ` · ${r.dur}s`), score: total, heard: s.changes, sloppy: s.sloppyChanges, manual: r.manual, clean, dur: r.dur, mode: r.mode,
+      text: `${total} ${cleanMode ? "clean" : "all"}${s.sloppyChanges ? ` · ${s.sloppyChanges} sloppy` : ""}${clean != null ? ` · ${clean}% clean` : ""}${durTxt}` });
     $("#result").innerHTML = `<div class="result" tabindex="-1">
       <p class="eyebrow">Result</p>
-      <p class="headline">${esc(name)} · <em>${total}</em> changes</p>
+      <p class="headline">${esc(name)} · <em>${total}</em> ${noun}</p>
       <p class="mono small">${esc(line)}</p>
       <div class="row"><button type="button" class="btn red" data-copy>Copy for Fretlog</button>
         <a class="btn" href="https://claude.ai/artifact/UxnD5gaehyATeUWixntR8b" target="_blank" rel="noopener">Open Fretlog ↗</a>
