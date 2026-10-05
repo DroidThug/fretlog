@@ -135,6 +135,20 @@
 
   F.fmtDate = t => new Date(t).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 
+  // Result card with "Copy for Fretlog", "Open Fretlog" and "Again". o: {headline (html), line, copy, onAgain}
+  F.resultCard = function (el, o) {
+    el.innerHTML = `<div class="result" tabindex="-1"><p class="eyebrow">Result</p><p class="headline">${o.headline}</p>
+      <p class="mono small">${F.esc(o.line)}</p>
+      <div class="row"><button type="button" class="btn red" data-copy>Copy for Fretlog</button>
+        <a class="btn" href="https://claude.ai/artifact/UxnD5gaehyATeUWixntR8b" target="_blank" rel="noopener">Open Fretlog ↗</a>
+        ${o.onAgain ? `<button type="button" class="btn ghost" data-again>Again</button>` : ""}</div><div data-fallback></div></div>`;
+    const r = el.querySelector(".result");
+    r.querySelector("[data-copy]").addEventListener("click", async e => { const ok = await F.copy(o.copy, r.querySelector("[data-fallback]")); e.target.textContent = ok ? "Copied" : "Select and copy below"; });
+    if (o.onAgain) r.querySelector("[data-again]").addEventListener("click", o.onAgain);
+    r.focus();
+  };
+  F.minus = n => (n < 0 ? "−" : n > 0 ? "+" : "") + Math.abs(Math.round(n));
+
   // ---------- history ----------
   // Records: {t, group, score, text, ...}. Best = max score (or min for lowerBetter engines).
   const LOWER_BETTER = { follow: true };
@@ -209,7 +223,7 @@
     this.src.connect(this.an); this.src.connect(this.anT);
     this.db = new Float32Array(this.an.frequencyBinCount); this.mag = new Float32Array(this.an.frequencyBinCount);
     this.td = new Float32Array(this.an.fftSize); this.tdT = new Float32Array(this.anT.fftSize);
-    if (this.onsetNode) this.src.connect(this.lp);
+    if (this.tapNode) this.src.connect(this.tapNode);
     await ctx.resume();
     this.startLoop();
     await this.measureNoise(1000);
@@ -247,18 +261,17 @@
     }, ms));
   };
   Mic.prototype.updateFloor = function () { this.floor = Math.max(0.001, this.noise * 2.5) * this.gateMul; };
-  // Sample-accurate onsets for timing: lowpass (keeps a high metronome click out) → AudioWorklet energy envelope.
-  Mic.prototype.envelopeStream = async function (fn) {
+  // Raw samples with sample-accurate start frames (AudioWorklet), for strum timing. fn({start, data}).
+  Mic.prototype.sampleStream = async function (fn) {
     const ctx = this.ctx;
-    if (!this.onsetNode) {
-      await ctx.audioWorklet.addModule("env-worklet.js");
-      this.lp = ctx.createBiquadFilter(); this.lp.type = "lowpass"; this.lp.frequency.value = D.C.TIMING_LOWPASS_HZ; this.lp.Q.value = 0.707;
-      this.onsetNode = new AudioWorkletNode(ctx, "env-proc", { processorOptions: { hop: D.C.ENV_HOP } });
+    if (!this.tapNode) {
+      await ctx.audioWorklet.addModule("sample-worklet.js");
+      this.tapNode = new AudioWorkletNode(ctx, "sample-tap", { numberOfInputs: 1, numberOfOutputs: 1, channelCount: 1, channelCountMode: "explicit" });
       const sink = ctx.createGain(); sink.gain.value = 0;
-      this.lp.connect(this.onsetNode); this.onsetNode.connect(sink); sink.connect(ctx.destination);
-      if (this.src) this.src.connect(this.lp);
+      this.tapNode.connect(sink); sink.connect(ctx.destination);
+      if (this.src) this.src.connect(this.tapNode);
     }
-    this.onsetNode.port.onmessage = ev => fn(ev.data);
+    this.tapNode.port.onmessage = ev => fn(ev.data);
   };
   F.Mic = Mic;
 

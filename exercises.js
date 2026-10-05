@@ -7,7 +7,7 @@
   // Engine → page. `ready:false` engines are hidden from the hub until they ship.
   const ENGINES = {
     changes: { page: "changes.html", name: "Chord changes", ready: true },
-    timing: { page: "timing.html", name: "Strum timing", ready: false },
+    timing: { page: "timing.html", name: "Strum timing", ready: true },
     check: { page: "check.html", name: "Chord check", ready: false },
     notes: { page: "notes.html", name: "Note finder", ready: false },
     follow: { page: "follow.html", name: "Riff & scale follow", ready: false },

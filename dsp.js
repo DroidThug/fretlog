@@ -23,6 +23,18 @@
     MARGIN_FRAC: 0.25,     // ... capped at MARGIN_FRAC x (1 - template similarity), so near-identical pairs (E/Em) stay usable
     MIN_TONALITY: 0.65,    // strums whose chroma is this flat (noise, knocks) are "unclear"
     SIMILAR_WARN: 0.9,     // templates closer than this are hard to tell apart
+    // --- strum timing (short-frame log spectral flux on raw samples from an AudioWorklet) ---
+    TF_FRAME: 1024,        // FFT frame (21 ms at 48 kHz), Hann window
+    TF_HOP: 128,           // hop = one AudioWorklet render quantum (2.7 ms at 48 kHz)
+    TF_LO_HZ: 150, TF_HI_HZ: 6000, // flux band
+    TF_GAMMA: 1000,        // log compression: log(1 + GAMMA * |X| / N)
+    TF_K: 1.5,             // onset when flux > median(last ~120 ms) * K + DELTA, rising edge
+    TF_DELTA: 1.0,
+    TF_MEDIAN_MS: 120,
+    CLICK_HZ: 2500,        // metronome click pitch; flux ignores CLICK_HZ ± CLICK_NOTCH_HZ so click bleed isn't a strum
+    CLICK_NOTCH_HZ: 400,
+    TIMING_TOL_MS: 40,     // a hit within ±this of the beat counts as "in time"
+    TIMING_WINDOW_MS: 150, // the furthest an onset can be from an expected hit and still be matched to it
     CHROMA_POWER: 0.5,     // peak-magnitude compression (0.5 = sqrt)
     CHROMA_TILT: 0,        // weight peaks by (CHROMA_LO_HZ/f)^TILT to favour fundamentals over harmonics
   };
@@ -257,8 +269,105 @@
     };
   }
 
+
+  // ---------- strum timing ----------
+  // Onset detector for timing. push(chunk, startSample) takes raw samples in any chunk size and returns
+  // onset times as sample indices (the end of the frame where flux crossed the threshold; the constant
+  // window delay is removed by latency calibration). Log-magnitude flux against a max-filtered frame from
+  // 2 hops back (SuperFlux-style) so beating between chord notes and vibrato don't trigger it.
+  function createFluxOnsetDetector(opts) {
+    const o = Object.assign({ sampleRate: 48000, frame: C.TF_FRAME, hop: C.TF_HOP, lo: C.TF_LO_HZ, hi: C.TF_HI_HZ,
+      gamma: C.TF_GAMMA, k: C.TF_K, delta: C.TF_DELTA, medianMs: C.TF_MEDIAN_MS, refractoryMs: 80,
+      notchHz: C.CLICK_HZ, notchWidth: C.CLICK_NOTCH_HZ, minRms: 0 }, opts || {});
+    const N = o.frame, win = new Float64Array(N);
+    for (let i = 0; i < N; i++) win[i] = 0.5 - 0.5 * Math.cos(2 * Math.PI * i / N);
+    const binHz = o.sampleRate / N, lo = Math.max(1, Math.round(o.lo / binHz)), hi = Math.min(N / 2 - 2, Math.round(o.hi / binHz));
+    const use = new Uint8Array(N / 2);
+    for (let b = lo; b <= hi; b++) use[b] = !(o.notchHz && Math.abs(b * binHz - o.notchHz) <= o.notchWidth);
+    const buf = new Float32Array(N), re = new Float64Array(N), im = new Float64Array(N);
+    const hist = [new Float64Array(N / 2), new Float64Array(N / 2)]; // log spectra 1 and 2 hops back
+    const medN = Math.max(5, Math.round(o.medianMs / 1000 * o.sampleRate / o.hop)), fluxes = [];
+    let fill = 0, sinceHop = 0, total = 0, armed = true, last = -Infinity, frames = 0;
+    function analyse(endSample) {
+      let e = 0;
+      for (let i = 0; i < N; i++) { const v = buf[(fill + i) % N]; re[i] = v * win[i]; im[i] = 0; e += v * v; }
+      fft(re, im);
+      const cur = new Float64Array(N / 2), ref = hist[1];
+      let flux = 0;
+      for (let b = 1; b < N / 2 - 1; b++) cur[b] = Math.log1p(o.gamma * Math.hypot(re[b], im[b]) / N);
+      for (let b = lo; b <= hi; b++) if (use[b]) {
+        const r = Math.max(ref[b - 1], ref[b], ref[b + 1]), d = cur[b] - r;
+        if (d > 0) flux += d;
+      }
+      hist[1] = hist[0]; hist[0] = cur; frames++;
+      const sorted = fluxes.slice().sort((x, y) => x - y), med = sorted.length ? sorted[sorted.length >> 1] : 0;
+      const thr = med * o.k + o.delta, rms = Math.sqrt(e / N);
+      fluxes.push(flux); if (fluxes.length > medN) fluxes.shift();
+      if (frames < 3) return -1;
+      if (flux > thr && rms >= o.minRms) {
+        const ok = armed && (endSample - last) / o.sampleRate * 1000 >= o.refractoryMs;
+        armed = false;
+        if (ok) { last = endSample; return endSample; }
+      } else if (flux <= thr) armed = true;
+      return -1;
+    }
+    return {
+      opts: o,
+      push(chunk, start) {
+        const out = [];
+        for (let i = 0; i < chunk.length; i++) {
+          buf[fill] = chunk[i]; fill = (fill + 1) % N; total++;
+          if (++sinceHop >= o.hop) { sinceHop = 0; const h = analyse(start + i + 1); if (h >= 0) out.push(h); }
+        }
+        return out;
+      },
+      reset() { buf.fill(0); hist[0].fill(0); hist[1].fill(0); fluxes.length = 0; fill = 0; sinceHop = 0; armed = true; last = -Infinity; frames = 0; },
+    };
+  }
+
+  // Expected hit times (seconds) for a pattern. hits are in beats from the bar start (0 = beat 1, 1.5 = "2 and").
+  // swing: "and" positions (x.5) move to x.667 (swung eighths).
+  function patternTimes(p) {
+    const beat = 60 / p.bpm, out = [];
+    for (let bar = 0; bar < p.bars; bar++) p.hits.forEach((h, i) => {
+      let pos = h;
+      if (p.swing && Math.abs(h % 1 - 0.5) < 1e-6) pos = Math.floor(h) + 2 / 3;
+      out.push({ t: p.t0 + (bar * p.beatsPerBar + pos) * beat, bar, i });
+    });
+    return out;
+  }
+
+  // Match onsets (seconds) to expected hits. Each onset is used at most once, nearest pairs first.
+  // window (s) is capped at 45% of the gap to the neighbouring expected hits so it can't steal a neighbour's strum.
+  function matchHits(onsets, expected, windowS) {
+    const W = windowS ?? C.TIMING_WINDOW_MS / 1000;
+    const win = expected.map((e, i) => {
+      const gPrev = i > 0 ? e.t - expected[i - 1].t : Infinity, gNext = i < expected.length - 1 ? expected[i + 1].t - e.t : Infinity;
+      return Math.min(W, 0.45 * Math.min(gPrev, gNext));
+    });
+    const pairs = [];
+    expected.forEach((e, i) => onsets.forEach((t, j) => { const d = t - e.t; if (Math.abs(d) <= win[i]) pairs.push([Math.abs(d), i, j, d]); }));
+    pairs.sort((a, b) => a[0] - b[0]);
+    const offs = new Array(expected.length).fill(null), used = new Set();
+    pairs.forEach(([, i, j, d]) => { if (offs[i] == null && !used.has(j)) { offs[i] = d; used.add(j); } });
+    return { offsets: offs, extras: onsets.length - used.size, extraTimes: onsets.filter((_, j) => !used.has(j)) };
+  }
+
+  // Stats in ms: mean (negative = early), sd, % of expected hits within ±tol, hits, misses.
+  function timingStats(offsets, tolMs) {
+    const tol = tolMs ?? C.TIMING_TOL_MS;
+    const ms = offsets.filter(x => x != null).map(x => x * 1000);
+    const mean = ms.length ? ms.reduce((a, b) => a + b, 0) / ms.length : 0;
+    const sd = ms.length > 1 ? Math.sqrt(ms.reduce((a, b) => a + (b - mean) ** 2, 0) / (ms.length - 1)) : 0;
+    const inTime = ms.filter(x => Math.abs(x) <= tol).length;
+    return { mean, sd, hits: ms.length, misses: offsets.length - ms.length, inTimePct: offsets.length ? Math.round(inTime / offsets.length * 100) : 0 };
+  }
+
+  function median(a) { if (!a.length) return 0; const s = a.slice().sort((x, y) => x - y), m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; }
+
   const api = { C, hzToBin, rms, dbToMag, l2normalize, cosine, fft, blackman, magnitudeSpectrum,
-    spectralFlux, chroma, tonality, averageVectors, createOnsetDetector, createStrumAnalyzer, classify, createChangeCounter };
+    spectralFlux, chroma, tonality, averageVectors, createOnsetDetector, createStrumAnalyzer, classify, createChangeCounter,
+    createFluxOnsetDetector, patternTimes, matchHits, timingStats, median };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   if (root) root.FretDSP = api;
 })(typeof window !== "undefined" ? window : typeof globalThis !== "undefined" ? globalThis : null);

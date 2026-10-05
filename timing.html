@@ -1,0 +1,289 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Strum Timing Trainer</title>
+<meta name="description" content="Strum along with a metronome and see whether you rush or drag, hit by hit.">
+<meta name="theme-color" content="#0c0c0c">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@700;800&family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;600&display=swap">
+<link rel="stylesheet" href="common.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='5' cy='8' r='4' fill='%23d0142c'/%3E%3Ccircle cx='12' cy='8' r='3' fill='%23f5c518'/%3E%3C/svg%3E">
+<style>
+.bpm { display: flex; align-items: center; gap: 14px; }
+.bpm b { font: 800 3rem/1 var(--f-display); min-width: 3ch; font-variant-numeric: tabular-nums; }
+.bpm input { flex: 1; }
+.lights { display: flex; gap: 10px; }
+.lights i { width: 26px; height: 26px; border-radius: 50%; border: 2px solid var(--line); }
+.lights i.acc { border-color: var(--grey); }
+.lights i.on { background: var(--yellow); border-color: var(--yellow); }
+.lane { display: grid; gap: 6px; }
+.slot { border: 2px solid var(--line); border-radius: var(--r); min-height: 64px; display: flex; flex-direction: column; align-items: center; justify-content: center; font: 800 1.6rem/1 var(--f-display); }
+.slot small { font: .7rem var(--f-mono); color: var(--grey); }
+.slot.ok { border-color: var(--yellow); color: var(--yellow); }
+.slot.off { border-color: var(--red); color: var(--red); }
+.slot.miss { border-style: dashed; color: var(--grey); }
+.slot.now { background: var(--panel-2); }
+.strip { position: relative; height: 56px; border: 1px solid var(--line); border-radius: var(--r); background: var(--panel-2); overflow: hidden; }
+.strip .band { position: absolute; top: 0; bottom: 0; background: rgba(245, 197, 24, .12); }
+.strip .mid { position: absolute; top: 0; bottom: 0; width: 2px; left: calc(50% - 1px); background: var(--ink); }
+.strip i { position: absolute; top: 50%; width: 12px; height: 12px; margin: -6px 0 0 -6px; border-radius: 50%; background: var(--grey); }
+.strip i.ok { background: var(--yellow); }
+.strip i.off { background: var(--red); }
+.strip i.new { width: 18px; height: 18px; margin: -9px 0 0 -9px; }
+.strip-lab { display: flex; justify-content: space-between; font: .75rem var(--f-mono); color: var(--grey); }
+.tapzone { min-height: 140px; border: 2px dashed var(--grey); border-radius: 12px; display: flex; align-items: center; justify-content: center; font: 800 2rem var(--f-display); text-transform: uppercase; cursor: pointer; user-select: none; -webkit-user-select: none; touch-action: manipulation; }
+.tapzone.hit { border-color: var(--yellow); color: var(--yellow); }
+.live-stats { display: flex; flex-wrap: wrap; gap: 18px; font: .95rem var(--f-mono); }
+.live-stats b { font: 800 1.8rem/1 var(--f-display); display: block; color: var(--yellow); }
+</style>
+</head>
+<body>
+<main class="wrap">
+  <section class="intro" id="intro"></section>
+  <div class="stack">
+    <section class="panel" aria-labelledby="h-set">
+      <header><h2 id="h-set"><span class="step">01</span>Setup</h2></header>
+      <div class="bpm"><b id="bpmv" class="mono">70</b><label class="field" style="flex:1">Tempo (bpm)<input type="range" id="bpm"></label></div>
+      <p class="small muted" id="unit"></p>
+      <div class="row">
+        <div class="field">Input<div class="seg" role="group" aria-label="Input" id="mode">
+          <button type="button" data-m="tap" aria-pressed="true">Tap</button><button type="button" data-m="mic" aria-pressed="false">Mic · beta</button></div></div>
+        <div class="field">Click<div class="seg" role="group" aria-label="Metronome sound" id="snd">
+          <button type="button" data-s="1" aria-pressed="true">Sound</button><button type="button" data-s="0" aria-pressed="false">Visual</button></div></div>
+        <div class="field">Bars<div class="seg" role="group" aria-label="Bars" id="bars">
+          <button type="button" data-b="8" aria-pressed="true">8</button><button type="button" data-b="16" aria-pressed="false">16</button></div></div>
+      </div>
+      <p class="note" id="modenote"></p>
+    </section>
+
+    <section class="panel" aria-labelledby="h-mic" id="micpanel" hidden>
+      <header><h2 id="h-mic"><span class="step">02</span>Input</h2></header>
+      <div id="mic" class="stack"></div>
+    </section>
+
+    <section class="panel" aria-labelledby="h-lat">
+      <header><h2 id="h-lat"><span class="step" id="latstep">02</span>Latency</h2></header>
+      <p id="latline" class="mono small"></p>
+      <div class="row"><button type="button" class="btn" id="latbtn">Calibrate latency</button></div>
+      <p class="small muted">Plays one bar to count you in, then 8 clicks at 80 bpm. Strum (or tap) exactly on each click. The median delay is your device's latency, and later runs subtract it.</p>
+    </section>
+
+    <section class="panel" aria-labelledby="h-run">
+      <header><h2 id="h-run"><span class="step" id="runstep">03</span>Run</h2><span class="small mono" id="status" aria-live="polite"></span></header>
+      <div class="row"><button type="button" class="btn red big" id="start">Start</button><button type="button" class="btn ghost" id="stop" hidden>Stop</button></div>
+      <div class="lights" id="lights" aria-hidden="true"></div>
+      <div class="lane" id="lane"></div>
+      <div><div class="strip" id="strip" aria-hidden="true"><div class="band" id="band"></div><div class="mid"></div></div>
+        <div class="strip-lab"><span>← early 100 ms</span><span>on the beat</span><span>late 100 ms →</span></div></div>
+      <div class="live-stats" id="live" aria-live="off"></div>
+      <div class="tapzone" id="tapzone" role="button" tabindex="0" aria-label="Tap here, or press Space, on each strum">Tap / Space</div>
+      <div id="result"></div>
+    </section>
+
+    <section class="panel" aria-labelledby="h-hist">
+      <header><h2 id="h-hist">History</h2></header>
+      <div id="hist"></div>
+    </section>
+  </div>
+</main>
+<script src="dsp.js"></script>
+<script src="chords.js"></script>
+<script src="lessons.js"></script>
+<script src="exercises.js"></script>
+<script src="common.js"></script>
+<script>
+(function () {
+  "use strict";
+  const D = FretDSP, $ = F.$, esc = F.esc;
+  const hit = F.exerciseFromHash("timing"), ex = hit ? hit.ex : F.firstExercise("timing", F.grade());
+  const P = ex.params;
+  F.chrome("practice", () => { location.href = "index.html"; });
+  F.exerciseIntro($("#intro"), ex);
+
+  // ----- settings -----
+  let bpm = +F.store.get("bpm." + ex.id, P.bpm[2]) || P.bpm[2], mode = F.store.get("tmode", "tap") === "mic" ? "mic" : "tap", sound = true, bars = P.bars || 8;
+  const bpmIn = $("#bpm"); bpmIn.min = P.bpm[0]; bpmIn.max = P.bpm[1]; bpmIn.step = 1; bpmIn.value = bpm; $("#bpmv").textContent = bpm;
+  bpmIn.addEventListener("input", () => { bpm = +bpmIn.value; $("#bpmv").textContent = bpm; F.store.set("bpm." + ex.id, bpm); });
+  $("#unit").textContent = (P.unit ? `Tempo counts ${P.unit}. ` : "") + (P.swing ? "Swung: the “and” lands two-thirds through the beat. " : "") + `Pattern: ${patternText()}`;
+  function patternText() { return P.hits.map((h, i) => `${P.strokes[i] || "D"}@${countName(h)}`).join(" "); }
+  function countName(h) { const b = Math.floor(h) + 1, f = h % 1; return f === 0 ? String(b) : Math.abs(f - .5) < 1e-6 ? b + "&" : Math.abs(f - .25) < 1e-6 ? b + "e" : b + "a"; }
+  const seg = (sel, attr, fn) => $(sel).addEventListener("click", e => { const b = e.target.closest(`[data-${attr}]`); if (!b || run) return; F.$$(`${sel} [data-${attr}]`).forEach(x => x.setAttribute("aria-pressed", String(x === b))); fn(b.dataset[attr]); });
+  seg("#mode", "m", v => { mode = v; F.store.set("tmode", v); paintMode(); });
+  seg("#snd", "s", v => { sound = v === "1"; });
+  seg("#bars", "b", v => { bars = +v; });
+  F.$$("#mode [data-m]").forEach(x => x.setAttribute("aria-pressed", String(x.dataset.m === mode)));
+
+  // ----- audio -----
+  const mic = new F.Mic();
+  let ctx = null, det = null;
+  const getCtx = () => { if (mic.ctx) return (ctx = mic.ctx); if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)(); return ctx; };
+  F.micPanel($("#mic"), mic, {
+    async onReady() {
+      ctx = mic.ctx;
+      try { await mic.sampleStream(onSamples); } catch (e) { $("#modenote").textContent = "This browser can't stream raw audio (AudioWorklet), so mic mode won't work here. Use Tap."; }
+      paintLatency();
+    },
+  });
+  function onSamples(m) {
+    if (!run || mode !== "mic" || !det) return;
+    det.opts.minRms = mic.floor;
+    det.push(m.data, m.start).forEach(idx => addOnset(idx / ctx.sampleRate - latency()));
+  }
+  const latKey = () => mode === "tap" ? "lat.tap" : "lat.mic." + mic.deviceKey;
+  const latency = () => (+F.store.get(latKey(), 0) || 0) / 1000;
+  function paintLatency() {
+    const v = F.store.get(latKey(), null);
+    $("#latline").textContent = v == null ? `Not calibrated for ${mode === "tap" ? "tapping" : "this input"} yet: offsets include your device's delay.` : `Latency (${mode === "tap" ? "tap" : mic.deviceLabel || "mic"}): ${Math.round(v)} ms, subtracted from every hit.`;
+  }
+  function paintMode() {
+    $("#micpanel").hidden = mode !== "mic";
+    $("#latstep").textContent = mode === "mic" ? "03" : "02"; $("#runstep").textContent = mode === "mic" ? "04" : "03";
+    $("#tapzone").hidden = mode !== "tap";
+    $("#modenote").innerHTML = mode === "tap"
+      ? "Tap mode: tap the pad (or press Space) at the moment you strum. Your guitar doesn't need to be connected, and timing is precise."
+      : "Mic mode is experimental: it can miss soft up-strums or hear a ringing chord as an extra strum. Use headphones for the click if you're on a phone or laptop mic; a USB amp input doesn't hear the click.";
+    paintLatency();
+  }
+
+  // ----- metronome -----
+  function click(t, accent) {
+    if (!sound) return;
+    const c = getCtx(), o = c.createOscillator(), g = c.createGain();
+    o.frequency.value = D.C.CLICK_HZ; o.type = "sine";
+    const peak = accent ? 0.6 : 0.3;
+    g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(peak, t + 0.0025); g.gain.exponentialRampToValueAtTime(0.001, t + 0.05);
+    o.connect(g); g.connect(c.destination); o.start(t); o.stop(t + 0.06);
+  }
+
+  // ----- run -----
+  let run = null;
+  const lights = $("#lights"), lane = $("#lane"), strip = $("#strip");
+  const tolPct = D.C.TIMING_TOL_MS / 100 * 50;
+  $("#band").style.left = (50 - tolPct) + "%"; $("#band").style.width = (2 * tolPct) + "%";
+
+  function start(calib) {
+    if (run) return;
+    const c = getCtx(); c.resume && c.resume();
+    const p = calib ? { bpm: 80, beatsPerBar: 4, hits: [0, 1, 2, 3], strokes: "DDDD", bars: 2, accents: [0] } : { bpm, beatsPerBar: P.beatsPerBar, hits: P.hits, strokes: P.strokes, bars, swing: P.swing, accents: P.accents || [0] };
+    const beat = 60 / p.bpm, T0 = c.currentTime + 0.4, Ts = T0 + p.beatsPerBar * beat;
+    const expected = D.patternTimes(Object.assign({ t0: Ts }, p));
+    const clicks = [];
+    for (let b = 0; b < (p.bars + 1) * p.beatsPerBar; b++) clicks.push({ t: T0 + b * beat, acc: p.accents.includes(b % p.beatsPerBar), i: b % p.beatsPerBar });
+    let gap = Infinity; for (let i = 1; i < expected.length; i++) gap = Math.min(gap, expected[i].t - expected[i - 1].t);
+    if (mode === "mic") {
+      if (!mic.ctx) { $("#status").textContent = "Enable the microphone first, or switch to Tap."; return; }
+      det = D.createFluxOnsetDetector({ sampleRate: c.sampleRate, refractoryMs: Math.min(80, 600 * gap), minRms: mic.floor });
+    }
+    run = { calib, p, beat, T0, Ts, expected, clicks, next: 0, onsets: [], end: expected[expected.length - 1].t + Math.min(0.5, beat), shown: new Set() };
+    $("#result").innerHTML = ""; $("#start").hidden = true; $("#stop").hidden = false; $("#latbtn").disabled = true;
+    lights.innerHTML = Array.from({ length: p.beatsPerBar }, (_, i) => `<i class="${p.accents.includes(i) ? "acc" : ""}"></i>`).join("");
+    lane.style.gridTemplateColumns = `repeat(${Math.min(p.hits.length, 12)}, minmax(0, 1fr))`;
+    lane.innerHTML = p.hits.map((h, i) => `<div class="slot" data-i="${i}">${esc(p.strokes[i] || "D")}<small>${countName(h)}</small></div>`).join("");
+    strip.querySelectorAll("i").forEach(x => x.remove()); $("#live").innerHTML = "";
+    F.wake.on();
+    run.sched = setInterval(schedule, 25); schedule();
+    run.raf = requestAnimationFrame(frame);
+    if (mode === "tap") $("#tapzone").focus();
+  }
+  function schedule() {
+    if (!run) return;
+    const now = ctx.currentTime;
+    while (run.next < run.clicks.length && run.clicks[run.next].t < now + 0.12) { const k = run.clicks[run.next++]; click(k.t, k.acc); }
+  }
+  function frame() {
+    if (!run) return;
+    const now = ctx.currentTime, r = run;
+    let cur = -1; for (const k of r.clicks) if (k.t <= now && now - k.t < r.beat * .5) cur = k.i;
+    F.$$("i", lights).forEach((x, i) => x.classList.toggle("on", i === cur));
+    if (now < r.Ts) $("#status").textContent = "Count-in…";
+    else $("#status").textContent = r.calib ? "Calibrating: strum on every click" : `Bar ${Math.min(r.p.bars, Math.floor((now - r.Ts) / (r.beat * r.p.beatsPerBar)) + 1)} / ${r.p.bars}`;
+    // slots: highlight the current position within the bar, mark judged hits
+    const barNow = Math.floor((now - r.Ts) / (r.beat * r.p.beatsPerBar));
+    F.$$(".slot", lane).forEach((s, i) => {
+      const e = r.expected.find(x => x.bar === barNow && x.i === i);
+      s.classList.toggle("now", !!e && Math.abs(now - e.t) < 0.08);
+    });
+    r.expected.forEach((e, k) => {
+      if (r.shown.has(k) || now < e.t + 0.16) return;
+      r.shown.add(k);
+      const m = D.matchHits(r.onsets, [e], D.C.TIMING_WINDOW_MS / 1000).offsets[0];
+      const s = lane.querySelector(`[data-i="${e.i}"]`);
+      s.classList.remove("ok", "off", "miss");
+      s.classList.add(m == null ? "miss" : Math.abs(m) * 1000 <= D.C.TIMING_TOL_MS ? "ok" : "off");
+      if (m != null) dot(m * 1000);
+    });
+    if (now > r.end) return finish();
+    r.raf = requestAnimationFrame(frame);
+  }
+  function dot(ms) {
+    strip.querySelectorAll("i.new").forEach(x => x.classList.remove("new"));
+    const d = document.createElement("i");
+    d.className = "new " + (Math.abs(ms) <= D.C.TIMING_TOL_MS ? "ok" : "off");
+    d.style.left = Math.max(1, Math.min(99, 50 + ms / 2)) + "%";
+    strip.append(d);
+    const all = strip.querySelectorAll("i"); if (all.length > 24) all[0].remove();
+    const st = D.timingStats(D.matchHits(run.onsets, run.expected.filter((_, k) => run.shown.has(k))).offsets);
+    $("#live").innerHTML = `<span><b>${F.minus(st.mean)} ms</b>mean</span><span><b>${Math.round(st.sd)} ms</b>spread</span><span><b>${st.inTimePct}%</b>in time</span>`;
+  }
+  function addOnset(t) { if (run) run.onsets.push(t); }
+  function tapAt(ev) {
+    if (!run || mode !== "tap") return;
+    let t = ctx.currentTime;
+    try { const ts = ctx.getOutputTimestamp(); if (ts && ts.performanceTime) t = ts.contextTime + (ev.timeStamp - ts.performanceTime) / 1000; } catch (e) { /* use currentTime */ }
+    addOnset(t - latency());
+    const z = $("#tapzone"); z.classList.add("hit"); setTimeout(() => z.classList.remove("hit"), 90);
+  }
+  $("#tapzone").addEventListener("pointerdown", e => { e.preventDefault(); tapAt(e); });
+  document.addEventListener("keydown", e => {
+    if (!run) return;
+    if (e.code === "Space") { e.preventDefault(); if (!e.repeat) tapAt(e); }
+    if (e.key === "Escape") stop();
+  });
+
+  function stop() { if (!run) return; cleanup(); $("#status").textContent = "Stopped."; }
+  function cleanup() {
+    clearInterval(run.sched); cancelAnimationFrame(run.raf); run = null; det = null;
+    $("#start").hidden = false; $("#stop").hidden = true; $("#latbtn").disabled = false; F.wake.off();
+    F.$$("i", lights).forEach(x => x.classList.remove("on"));
+  }
+  function finish() {
+    const r = run; cleanup();
+    const w = D.C.TIMING_WINDOW_MS / 1000;
+    // only strums inside the scored bars count (not the count-in or after the last bar)
+    const on = r.onsets.filter(t => t >= r.Ts - w && t <= r.expected[r.expected.length - 1].t + w);
+    const m = D.matchHits(on, r.expected, r.calib ? 0.25 : undefined);
+    if (r.calib) {
+      // latency was already subtracted from the onsets: add it back
+      const offs = m.offsets.filter(x => x != null);
+      if (offs.length < 6) { $("#status").textContent = `Only heard ${offs.length} of 8 — try again${mode === "mic" ? " (check the input level)" : ""}.`; return; }
+      const ms = (D.median(offs) + latency()) * 1000;
+      F.store.set(latKey(), Math.round(ms)); paintLatency();
+      $("#status").textContent = `Latency set to ${Math.round(ms)} ms.`;
+      return;
+    }
+    const st = D.timingStats(m.offsets);
+    $("#status").textContent = "Done.";
+    const tempo = `${r.p.bpm} bpm`;
+    const copy = `Grade ${ex.grade} · Strum timing · ${ex.title} · ${tempo} · mean ${F.minus(st.mean)} ms · ${st.inTimePct}% in time`;
+    const verdict = Math.abs(st.mean) <= 10 ? "on the beat" : st.mean < 0 ? "rushing a little" : "dragging a little";
+    F.resultCard($("#result"), {
+      headline: `<em>${st.inTimePct}%</em> in time`,
+      line: `${tempo} · mean ${F.minus(st.mean)} ms (${verdict}) · spread ${Math.round(st.sd)} ms · ${st.hits}/${r.expected.length} hits · ${st.misses} missed · ${m.extras} extra · ${mode === "mic" ? "mic" : "tap"}`,
+      copy, onAgain: () => start(false),
+    });
+    F.history(ex.id).add({ group: tempo, score: st.inTimePct, mean: Math.round(st.mean), sd: Math.round(st.sd), mode, text: `${st.inTimePct}% · mean ${F.minus(st.mean)} ms · ±${Math.round(st.sd)}` });
+    renderHist();
+  }
+  $("#start").addEventListener("click", () => start(false));
+  $("#stop").addEventListener("click", stop);
+  $("#latbtn").addEventListener("click", () => start(true));
+  function renderHist() { F.renderHistory($("#hist"), ex, { fmt: r => r.score + "%" }); }
+  window.addEventListener("hashchange", () => location.reload());
+  paintMode(); renderHist();
+})();
+</script>
+</body>
+</html>
