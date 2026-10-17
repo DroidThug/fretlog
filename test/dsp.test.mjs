@@ -9,7 +9,7 @@ if (process.env.DSP_OVERRIDE) Object.assign(C, JSON.parse(process.env.DSP_OVERRI
 
 const SR = 48000, N = C.FFT_SIZE, HOP = Math.round(SR * C.HOP_MS / 1000);
 const WIN = D.blackman(N);
-import { SR as _SR, setSeed, uni, addStrum, addNoise, addHum } from "./synth.mjs";
+import { SR as _SR, setSeed, uni, addStrum, addNoise, addHum, addClick } from "./synth.mjs";
 
 // Run the same frame pipeline the page uses: every HOP, take the last N samples, Blackman, |FFT|/N, RMS of last 1024.
 function analyse(buf, analyzer, onEvent) {
@@ -147,6 +147,29 @@ for (const [label, trem] of [["plain sustain", 0], ["sustain with 5 Hz 15% tremo
   const an = newAnalyzer(); let n = 0;
   analyse(buf, an, e => { if (e.type === "onset") n++; });
   check(n === 0, `5 s of room noise: ${n} onsets`);
+}
+
+// metronome bleed (chord-changes page with the click on): the notch keeps clicks from being strums
+{
+  setSeed(21);
+  const beat = SR, buf = new Float32Array(SR * 6);
+  addNoise(buf, NOISE); addHum(buf, 0.0007);
+  for (let b = 0; b < 6; b++) addClick(buf, b * beat, 0.3); // loud: laptop speaker next to the mic
+  const count = notch => { const an = D.createStrumAnalyzer({ sampleRate: SR, fftSize: N, noiseFloor: FLOOR, notch }); let n = 0; analyse(buf, an, e => { if (e.type === "onset") n++; }); return n; };
+  const off = count(false), on = count(true);
+  console.log(`  6 clicks, no strums: ${off} onsets without notch, ${on} with`);
+  check(on === 0, `metronome clicks alone (notch on): ${on} onsets`);
+  // strums on the click, changing A/D every 2 beats at 60 bpm
+  setSeed(22);
+  const b2 = new Float32Array(SR * 9);
+  addNoise(b2, NOISE); addHum(b2, 0.0007);
+  const seq = [];
+  for (let b = 0; b < 8; b++) { addClick(b2, b * beat, 0.3); const c = (b >> 1) % 2 ? "D" : "A"; seq.push(c); addStrum(b2, c, b * beat + Math.round(SR * uni(0, 0.03)), { vel: 0.8, maxLen: beat }); }
+  const an = D.createStrumAnalyzer({ sampleRate: SR, fftSize: N, noiseFloor: FLOOR, notch: true });
+  const tpl = { A: D.idealChroma(CH.CHORDS.A), D: D.idealChroma(CH.CHORDS.D) };
+  const counter = D.createChangeCounter({ countSloppy: true }); let strums = 0;
+  analyse(b2, an, e => { if (e.type === "strum") { strums++; counter.push(D.classify(e.chroma, tpl).chord, true); } });
+  check(strums === 8 && counter.state.changes === 3, `strums on the click (notch on): ${strums}/8 strums, ${counter.state.changes}/3 changes`);
 }
 
 // Other suites share this runner so `node test/dsp.test.mjs` runs everything.

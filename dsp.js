@@ -130,10 +130,12 @@
   // ---------- onset features ----------
   // Positive spectral flux in [lo,hi], normalised by the current frame's energy in that band,
   // so the value is level-independent (0 = nothing new, ~1 = everything new).
-  function spectralFlux(prev, cur, lo, hi) {
+  // skip = optional [from, to] bin range left out (the metronome click's notch).
+  function spectralFlux(prev, cur, lo, hi, skip) {
     if (!prev) return 0;
     let pos = 0, tot = 0;
     for (let i = lo; i <= hi; i++) {
+      if (skip && i >= skip[0] && i <= skip[1]) continue;
       const d = cur[i] - prev[i];
       if (d > 0) pos += d;
       tot += cur[i];
@@ -220,6 +222,9 @@
       delayMs: C.CHROMA_DELAY_MS, spanMs: C.CHROMA_SPAN_MS }, opts || {});
     const det = createOnsetDetector(o);
     const lo = hzToBin(C.FLUX_LO_HZ, o.sampleRate, o.fftSize), hi = hzToBin(C.FLUX_HI_HZ, o.sampleRate, o.fftSize);
+    // notch: true leaves CLICK_HZ ± CLICK_NOTCH_HZ out of the flux, so a metronome click heard by the mic isn't a strum.
+    // (The chroma band stops below CLICK_HZ, so the click never colours the chord.) Settable later via .notch.
+    const notchBins = [hzToBin(C.CLICK_HZ - C.CLICK_NOTCH_HZ, o.sampleRate, o.fftSize), hzToBin(C.CLICK_HZ + C.CLICK_NOTCH_HZ, o.sampleRate, o.fftSize)];
     let prev = null, pending = null;
     function finish(events) {
       if (pending && pending.vs.length) events.push({ type: "strum", t: pending.t, chroma: averageVectors(pending.vs) });
@@ -227,9 +232,10 @@
     }
     return {
       detector: det,
+      notch: !!o.notch,
       feed(frame) {
         const ev = [];
-        const flux = spectralFlux(prev, frame.mag, lo, hi);
+        const flux = spectralFlux(prev, frame.mag, lo, hi, this.notch ? notchBins : null);
         prev = Float32Array.from(frame.mag);
         const onset = det.process(flux, frame.rms, frame.t);
         if (onset) { finish(ev); pending = { t: frame.t, vs: [] }; ev.push({ type: "onset", t: frame.t, flux }); }

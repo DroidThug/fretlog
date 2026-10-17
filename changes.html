@@ -47,6 +47,19 @@
 .stage-chords { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; max-width: 360px; width: 100%; margin: 0 auto; }
 @media (max-height: 640px) { .stage-chords { max-width: 240px; } }
 .hint { text-align: center; color: var(--grey); font-size: .85rem; }
+.metro { display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-end; }
+.metro .bpm { display: flex; align-items: center; gap: 12px; flex: 1 1 220px; }
+.metro .bpm b { font: 800 2.4rem/1 var(--f-display); min-width: 3ch; font-variant-numeric: tabular-nums; }
+.metro .bpm .field { flex: 1; }
+.pace b { color: var(--yellow); }
+.beats { display: flex; gap: 10px; justify-content: center; }
+.beats[hidden] { display: none; }
+.beats i { width: 18px; height: 18px; border-radius: 50%; border: 2px solid var(--grey); }
+.beats i.chg { border-color: var(--yellow); }
+.beats i.on { background: var(--ink); border-color: var(--ink); }
+.beats i.chg.on { background: var(--yellow); border-color: var(--yellow); }
+.stage-chords .diagram { border: 2px solid transparent; border-radius: 10px; transition: border-color .08s; }
+.stage-chords .diagram.cue { border-color: var(--red); }
 </style>
 </head>
 <body>
@@ -77,6 +90,19 @@
 
     <section class="panel" aria-labelledby="h-run">
       <header><h2 id="h-run"><span class="step">04</span>Run</h2></header>
+      <div class="metro">
+        <div class="seg" role="group" aria-label="Metronome" id="mon">
+          <button type="button" data-on="0" aria-pressed="true">Click off</button>
+          <button type="button" data-on="1" aria-pressed="false">Click on</button>
+        </div>
+        <div class="bpm" data-metro><b id="bpmv" class="mono">60</b><label class="field">Tempo (bpm)<input type="range" id="bpm" min="40" max="140" step="1" value="60"></label></div>
+        <div class="field" data-metro>Change every<div class="seg" role="group" aria-label="Change every" id="every">
+          <button type="button" data-e="4" aria-pressed="false">4 beats</button>
+          <button type="button" data-e="2" aria-pressed="true">2</button>
+          <button type="button" data-e="1" aria-pressed="false">1</button>
+        </div></div>
+      </div>
+      <p class="small pace" id="pace" data-metro aria-live="polite"></p>
       <div class="run-row">
         <div class="seg durs" role="group" aria-label="Duration" id="durs">
           <button type="button" data-d="30" aria-pressed="false">30s</button>
@@ -112,6 +138,7 @@
     <span class="lab" id="s-lab">get ready</span>
     <span class="tally" id="s-tally"></span>
   </div>
+  <div class="beats" id="s-beats" hidden aria-hidden="true"></div>
   <div class="stage-chords" id="s-chords"></div>
   <p class="hint">Tap the number or press Space to add a change by hand.</p>
 </section>
@@ -272,6 +299,34 @@
     }
   }
 
+  // ----- metronome -----
+  // One click per beat; the change beat (every `every` beats) is accented and the chord to switch to is outlined on stage.
+  // The mic analyser notches the click's pitch while it plays (dsp: notch), so speaker bleed isn't counted as a strum.
+  const clampInt = (v, lo, hi, d) => { v = Math.round(+v); return v >= lo && v <= hi ? v : d; };
+  let metro = F.store.get("metro", false) === true, bpm = clampInt(F.store.get("mbpm", 60), 40, 140, 60), every = [1, 2, 4].includes(+F.store.get("mevery", 2)) ? +F.store.get("mevery", 2) : 2;
+  let actx = null;
+  const audio = () => { if (mic.ctx) return mic.ctx; if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)(); return actx; };
+  function click(c, t, accent) {
+    const o = c.createOscillator(), g = c.createGain();
+    o.frequency.value = D.C.CLICK_HZ; o.type = "sine";
+    g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(accent ? 0.6 : 0.25, t + 0.0025); g.gain.exponentialRampToValueAtTime(0.001, t + 0.05);
+    o.connect(g); g.connect(c.destination); o.start(t); o.stop(t + 0.06);
+  }
+  function paintMetro() {
+    F.$$("#mon [data-on]").forEach(x => x.setAttribute("aria-pressed", String((x.dataset.on === "1") === metro)));
+    F.$$("#every [data-e]").forEach(x => x.setAttribute("aria-pressed", String(+x.dataset.e === every)));
+    F.$$("[data-metro]").forEach(x => { x.hidden = !metro; });
+    $("#bpm").value = bpm; $("#bpmv").textContent = bpm;
+    const rate = Math.round(bpm / every);
+    $("#pace").innerHTML = `Strum on every click, switch chords on the accent: <b>${rate} changes a minute</b>. ` +
+      (rate >= 30 ? "That's Justin's target pace." : `Justin's target is about 30; ${bpm >= 60 && every > 2 ? "try every 2 beats" : "nudge the tempo up"} when this feels easy.`) +
+      ` The counter ignores the click's pitch, but headphones still help.`;
+  }
+  $("#mon").addEventListener("click", e => { const b = e.target.closest("[data-on]"); if (!b || run) return; metro = b.dataset.on === "1"; F.store.set("metro", metro); paintMetro(); });
+  $("#every").addEventListener("click", e => { const b = e.target.closest("[data-e]"); if (!b || run) return; every = +b.dataset.e; F.store.set("mevery", every); paintMetro(); });
+  $("#bpm").addEventListener("input", () => { if (run) return; bpm = clampInt($("#bpm").value, 40, 140, 60); F.store.set("mbpm", bpm); paintMetro(); });
+  paintMetro();
+
   // ----- run -----
   $("#durs").addEventListener("click", e => { const b = e.target.closest("[data-d]"); if (!b) return; duration = +b.dataset.d; F.$$("#durs [data-d]").forEach(x => x.setAttribute("aria-pressed", String(x === b))); });
   const stage = $("#stage"), pad = $("#pad");
@@ -287,6 +342,13 @@
         `${s.changes} heard · ${s.sloppyChanges} sloppy · ${run.manual} manual · ${s.unclear} unclear`;
     }
     F.$$("#s-chords .diagram").forEach(d => d.classList.toggle("live", d.dataset.c === run.current));
+  }
+  // Metronome cue: light the current beat; outline the chord that should be ringing now.
+  function paintBeat(k) {
+    const m = run.metro, j = k - 4; // beats 0..3 are the count-in
+    F.$$("#s-beats i").forEach((x, i) => x.classList.toggle("on", i === ((k % 4) + 4) % 4));
+    const cue = j < 0 ? m.pair[0] : m.pair[Math.floor(j / m.every) % 2];
+    F.$$("#s-chords .diagram").forEach(d => d.classList.toggle("cue", d.dataset.c === cue));
   }
   let flashT;
   function flash(kind) { pad.classList.remove("unclear", "heard", "sloppy"); void pad.offsetWidth; pad.classList.add(kind); clearTimeout(flashT); flashT = setTimeout(() => pad.classList.remove("unclear", "heard", "sloppy"), kind === "heard" ? 250 : 350); }
@@ -309,6 +371,8 @@
     $("#s-timer").textContent = fmtT(duration); $("#s-tally").textContent = ""; $("#s-lab").textContent = "get ready";
     stage.hidden = false; document.body.style.overflow = "hidden"; pad.focus();
     F.wake.on();
+    $("#s-beats").hidden = !metro;
+    if (metro) { startMetro(); return; }
     let n = 3;
     const cd = () => {
       if (!run) return;
@@ -325,9 +389,39 @@
     cd();
   });
 
+  // Count-in of 4 clicks, then the run starts on the next beat; all timing runs on the audio clock.
+  function startMetro() {
+    const c = audio(); c.resume && c.resume();
+    const beat = 60 / bpm, T0 = c.currentTime + 0.3, Ts = T0 + 4 * beat;
+    const m = run.metro = { bpm, every, beat, T0, Ts, c, next: 0, last: -1, pair: run.pair };
+    const nBeats = 4 + Math.ceil(run.dur / beat);
+    $("#s-beats").innerHTML = Array.from({ length: 4 }, (_, i) => `<i class="${every === 1 || i % every === 0 ? "chg" : ""}"></i>`).join("");
+    if (analyzer) analyzer.notch = true;
+    $("#s-count").classList.add("cd"); $("#s-count").textContent = 4; $("#s-lab").textContent = "count-in";
+    run.tick = setInterval(() => {
+      if (!run) return;
+      const now = c.currentTime;
+      while (m.next < nBeats && T0 + m.next * beat < now + 0.12) { const k = m.next++; click(c, T0 + k * beat, k < 4 ? k === 0 : (k - 4) % every === 0); }
+      const k = Math.floor((now - T0) / beat);
+      if (k >= 0 && k !== m.last) { m.last = k; paintBeat(k); if (k < 4) $("#s-count").textContent = 4 - k; }
+      if (run.phase === "count" && now >= Ts) {
+        run.phase = "live"; run.t0 = performance.now() - (now - Ts) * 1000;
+        if (analyzer) analyzer.reset();
+        paintStage();
+      }
+      if (run.phase === "live") {
+        const left = run.dur - (performance.now() - run.t0) / 1000;
+        $("#s-timer").textContent = fmtT(left);
+        if (left <= 0) endRun(true);
+      }
+    }, 25);
+  }
+
   function endRun(done) {
     if (!run) return;
     clearTimeout(run.cdT); clearInterval(run.tick);
+    if (analyzer) analyzer.notch = false;
+    F.$$("#s-chords .diagram").forEach(d => d.classList.remove("cue"));
     const r = run; run = null;
     stage.hidden = true; document.body.style.overflow = ""; F.wake.off();
     if (!done || r.phase !== "live") { $("#start").focus(); return; }
@@ -338,11 +432,13 @@
     const parts = [`${name} · ${total} ${noun}` + (r.manual ? ` (${s.changes} heard + ${r.manual} manual)` : ""),
       analyzer ? `${s.sloppyChanges} sloppy` + (cleanMode ? "" : " (included)") : null,
       clean != null ? `${clean}% clean strums` : null, r.dur !== 60 ? `${r.dur} s` : null,
-      r.generic.length ? `generic ${r.generic.map(CH.label).join(" + ")}` : null].filter(Boolean);
+      r.generic.length ? `generic ${r.generic.map(CH.label).join(" + ")}` : null,
+      r.metro ? `click ${r.metro.bpm} bpm, change every ${r.metro.every}` : null].filter(Boolean);
     const line = parts.join(" · ");
     const copyText = `${name} ${total}${durTxt}`;
     F.history(ex.id).add({ group: name + (cleanMode ? "" : " · all changes") + (r.dur === 60 ? "" : ` · ${r.dur}s`), score: total, heard: s.changes, sloppy: s.sloppyChanges, manual: r.manual, clean, dur: r.dur, mode: r.mode,
-      text: `${total} ${cleanMode ? "clean" : "all"}${s.sloppyChanges ? ` · ${s.sloppyChanges} sloppy` : ""}${clean != null ? ` · ${clean}% clean` : ""}${durTxt}` });
+      bpm: r.metro ? r.metro.bpm : null, every: r.metro ? r.metro.every : null,
+      text: `${total} ${cleanMode ? "clean" : "all"}${s.sloppyChanges ? ` · ${s.sloppyChanges} sloppy` : ""}${clean != null ? ` · ${clean}% clean` : ""}${durTxt}${r.metro ? ` · ${r.metro.bpm} bpm/${r.metro.every}` : ""}` });
     $("#result").innerHTML = `<div class="result" tabindex="-1">
       <p class="eyebrow">Result</p>
       <p class="headline">${esc(name)} · <em>${total}</em> ${noun}</p>

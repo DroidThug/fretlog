@@ -31,6 +31,8 @@ All content is one array in `exercises.js`: `{id, grade, engine, title, blurb, j
 | **Note finder** (`notes.html`) | Open string names | Naturals on strings 6 & 5, frets 0–12 | All notes on strings 6, 5 & 4, with sharps and flats |
 | **Riff & scale follow** (`follow.html`) | Strings 6 & 5 note drills (frets 0–3) | A minor pentatonic, pattern 1 | Pentatonic pattern 2, patterns 1→2, A blues scale |
 
+Chord changes has an optional metronome: pick a tempo and "change every 4 / 2 / 1 beats", get a 4-click count-in, and the chord to switch to is outlined on the change beat. While it plays, the strum detector leaves the click's pitch (`CLICK_HZ` ± `CLICK_NOTCH_HZ`) out of its onset band, so speaker bleed isn't counted.
+
 Deep links:
 
 - `<engine>.html#<exercise-id>`, or `exercise.html#<exercise-id>`, which redirects.
