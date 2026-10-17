@@ -60,6 +60,24 @@
 .beats i.chg.on { background: var(--yellow); border-color: var(--yellow); }
 .stage-chords .diagram { border: 2px solid transparent; border-radius: 10px; transition: border-color .08s; }
 .stage-chords .diagram.cue { border-color: var(--red); }
+.hcards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 220px), 1fr)); gap: 10px; }
+.hcard { border: 1px solid var(--line); border-radius: var(--r); padding: 12px; display: flex; flex-direction: column; gap: 6px; }
+.hcard.cur { border-color: var(--yellow); }
+.hcard .hbig { display: flex; align-items: baseline; gap: 8px; }
+.hcard .hbig b { font: 800 2.2rem/1 var(--f-display); color: var(--yellow); }
+.hcard svg { width: 100%; height: 28px; }
+.hbar { height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; }
+.hbar i { display: block; height: 100%; background: var(--yellow); }
+#hist .hist-list b { color: var(--ink); }
+.slog { display: flex; gap: 6px; justify-content: center; flex-wrap: wrap; min-height: 30px; font: 600 .95rem/1 var(--f-mono); }
+.slog i { font-style: normal; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--line); color: var(--grey); }
+.slog i.chg { color: var(--black); background: var(--yellow); border-color: var(--yellow); }
+.slog i.bad { color: var(--ink); border-color: var(--red); background: #3a0a12; }
+.slog i.soft { border-style: dashed; }
+.slog i.unc { opacity: .6; }
+.bd { border-collapse: collapse; font: .85rem/1.4 var(--f-mono); margin: 6px 0; width: 100%; max-width: 560px; }
+.bd th, .bd td { text-align: left; padding: 4px 8px 4px 0; border-bottom: 1px solid var(--line); }
+.bd th { color: var(--grey); font-weight: 400; }
 </style>
 </head>
 <body>
@@ -115,7 +133,7 @@
         </div>
         <button type="button" class="btn red big" id="start">Start</button>
       </div>
-      <p class="small muted">Clean only: a change counts when the new chord rings properly. A strum with a quiet or muted note is tallied as “sloppy” instead.</p>
+      <p class="small muted">What counts: a change is a strum the mic hears as the <em>other</em> chord from your last strum. In Clean only it must also ring properly; a switch with a quiet or muted note is “sloppy” and isn't counted (strumming that same chord again won't count either, so switch back and try again). The strip under the counter shows each strum live: <b>→D ✓</b> counted, <b>→D ✗</b> sloppy switch, a dim name for a repeat of the same chord, <b>?</b> unclear.</p>
       <p class="small muted" id="runnote"></p>
       <div id="result"></div>
     </section>
@@ -138,6 +156,7 @@
     <span class="lab" id="s-lab">get ready</span>
     <span class="tally" id="s-tally"></span>
   </div>
+  <div class="slog" id="s-log" aria-hidden="true"></div>
   <div class="beats" id="s-beats" hidden aria-hidden="true"></div>
   <div class="stage-chords" id="s-chords"></div>
   <p class="hint">Tap the number or press Space to add a change by hand.</p>
@@ -293,9 +312,10 @@
     if (run && run.phase === "live") {
       const r = D.classify(ev.chroma, run.templates);
       const q = r.chord ? D.strumQuality(ev.chroma, CH.CHORDS[r.chord], D.C.RUN_CLEAN_MIN) : null;
-      run.counter.push(r.chord, q ? q.ok : true);
+      const prev = run.counter.state.last, counted = run.counter.push(r.chord, q ? q.ok : true);
+      run.log.push({ chord: r.chord, ok: q ? q.ok : null, sw: !!r.chord && prev != null && r.chord !== prev, counted, reason: q && !q.ok ? q.reason : null });
       if (r.chord) { run.current = r.chord; flash(q.ok ? "heard" : "sloppy"); } else flash("unclear");
-      paintStage();
+      paintStage(); paintLog();
     }
   }
 
@@ -365,10 +385,10 @@
     if (run) return;
     calib = null; renderCalib();
     const tp = templates();
-    run = { phase: "count", mode: countMode, counter: D.createChangeCounter({ countSloppy: countMode === "all" }), templates: tp.t, generic: tp.generic, manual: 0, current: null, dur: duration, pair: pair.slice() };
+    run = { phase: "count", mode: countMode, counter: D.createChangeCounter({ countSloppy: countMode === "all" }), templates: tp.t, generic: tp.generic, manual: 0, log: [], current: null, dur: duration, pair: pair.slice() };
     $("#s-pair").textContent = pairName(pair);
     $("#s-chords").innerHTML = pair.map(c => `<div class="diagram" data-c="${esc(c)}">${F.chordSVG(c)}</div>`).join("");
-    $("#s-timer").textContent = fmtT(duration); $("#s-tally").textContent = ""; $("#s-lab").textContent = "get ready";
+    $("#s-timer").textContent = fmtT(duration); $("#s-tally").textContent = ""; $("#s-log").innerHTML = ""; $("#s-lab").textContent = "get ready";
     stage.hidden = false; document.body.style.overflow = "hidden"; pad.focus();
     F.wake.on();
     $("#s-beats").hidden = !metro;
@@ -388,6 +408,26 @@
     };
     cd();
   });
+
+  // Live strum log: the last strums the mic heard, newest last. ✓ = a counted change, ✗ = a switch that rang sloppy.
+  function chipOf(x) {
+    if (!x.chord) return `<i class="unc">?</i>`;
+    const n = esc(CH.label(x.chord));
+    if (x.counted) return `<i class="chg${x.ok === false ? " soft" : ""}">→${n} ✓</i>`;
+    if (x.sw) return `<i class="bad">→${n} ✗</i>`;
+    return `<i class="${x.ok === false ? "soft" : ""}">${n}</i>`;
+  }
+  function paintLog() { if (run) $("#s-log").innerHTML = run.log.slice(-10).map(chipOf).join(""); }
+  // Per target chord: switches into it that counted vs rang sloppy, plus the most common reason a strum of it was sloppy.
+  function breakdown(log, prs) {
+    return prs.map(c => {
+      const into = log.filter(x => x.sw && x.chord === c), bad = log.filter(x => x.chord === c && x.ok === false);
+      const why = {};
+      bad.forEach(x => { const k = x.reason.type === "string" ? `${CH.STRING_NAMES[x.reason.string]} string quiet` : x.reason.type === "note" ? `${x.reason.name} note quiet` : "didn't fully sound like it"; why[k] = (why[k] || 0) + 1; });
+      const top = Object.entries(why).sort((a, b) => b[1] - a[1])[0];
+      return { c, ok: into.filter(x => x.ok).length, sloppy: into.filter(x => x.ok === false).length, strums: log.filter(x => x.chord === c).length, bad: bad.length, top: top ? `${top[0]} (${top[1]}×)` : null };
+    });
+  }
 
   // Count-in of 4 clicks, then the run starts on the next beat; all timing runs on the audio clock.
   function startMetro() {
@@ -435,14 +475,18 @@
       r.generic.length ? `generic ${r.generic.map(CH.label).join(" + ")}` : null,
       r.metro ? `click ${r.metro.bpm} bpm, change every ${r.metro.every}` : null].filter(Boolean);
     const line = parts.join(" · ");
+    const bd = breakdown(r.log, r.pair), worst = bd.filter(b => b.sloppy + b.bad > 0).sort((a, b) => (b.sloppy + b.bad) - (a.sloppy + a.bad))[0];
     const copyText = `${name} ${total}${durTxt}`;
     F.history(ex.id).add({ group: name + (cleanMode ? "" : " · all changes") + (r.dur === 60 ? "" : ` · ${r.dur}s`), score: total, heard: s.changes, sloppy: s.sloppyChanges, manual: r.manual, clean, dur: r.dur, mode: r.mode,
+      into: Object.fromEntries(bd.map(b => [b.c, { ok: b.ok, sloppy: b.sloppy }])),
       bpm: r.metro ? r.metro.bpm : null, every: r.metro ? r.metro.every : null,
       text: `${total} ${cleanMode ? "clean" : "all"}${s.sloppyChanges ? ` · ${s.sloppyChanges} sloppy` : ""}${clean != null ? ` · ${clean}% clean` : ""}${durTxt}${r.metro ? ` · ${r.metro.bpm} bpm/${r.metro.every}` : ""}` });
     $("#result").innerHTML = `<div class="result" tabindex="-1">
       <p class="eyebrow">Result</p>
       <p class="headline">${esc(name)} · <em>${total}</em> ${noun}</p>
       <p class="mono small">${esc(line)}</p>
+      ${bd.some(b => b.strums) ? `<table class="bd"><thead><tr><th>Switching to</th><th>Counted</th><th>Sloppy</th><th>What sounded off</th></tr></thead><tbody>${bd.map(b => `<tr><td>${esc(CH.label(b.c))}</td><td>${b.ok}</td><td>${b.sloppy}</td><td>${b.top ? esc(b.top) : b.strums ? "rang clean" : "not heard"}</td></tr>`).join("")}</tbody></table>
+      ${worst ? `<p class="small">Weak spot: getting to <b>${esc(CH.label(worst.c))}</b>. ${worst.top ? `Mostly ${esc(worst.top.replace(/ \(\d+×\)$/, ""))}: ` : ""}check that finger on its own${checkHref(worst.c) ? ` in <a href="${esc(checkHref(worst.c))}">Chord check</a>` : ""}.</p>` : ""}` : ""}
       <div class="row"><button type="button" class="btn red" data-copy>Copy for Fretlog</button>
         <a class="btn" href="https://claude.ai/artifact/UxnD5gaehyATeUWixntR8b" target="_blank" rel="noopener">Open Fretlog ↗</a>
         <button type="button" class="btn ghost" data-again>Again</button></div>
@@ -454,7 +498,47 @@
     renderHist();
   }
 
-  function renderHist() { F.renderHistory($("#hist"), ex, { fmt: r => String(r.score) }); }
+  // History: one card per pair (current pair first). Headline = best clean one-minute count vs Justin's ~30 target;
+  // all-changes and 30 s bests are secondary. Rows spell out changes vs strum cleanliness, which used to read alike.
+  const TARGET = 30;
+  const recInfo = r => {
+    const g = String(r.group || ""), parts = g.split(" · ");
+    const mode = r.mode === "all" || r.mode === "clean" ? r.mode : (g.includes("all changes") ? "all" : "clean");
+    const dur = Number.isFinite(r.dur) ? r.dur : (/· (\d+)s/.exec(g) ? +/· (\d+)s/.exec(g)[1] : 60);
+    return { pair: parts[0] || "—", mode, dur };
+  };
+  function renderHist() {
+    const el = $("#hist"), h = F.history(ex.id), recs = h.list();
+    if (!recs.length) { el.innerHTML = `<p class="empty">No runs yet. Your results are kept in this browser only.</p>`; return; }
+    const byPair = new Map();
+    recs.forEach(r => { const i = recInfo(r); if (!byPair.has(i.pair)) byPair.set(i.pair, []); byPair.get(i.pair).push(Object.assign({ r }, i)); });
+    const cur = pairName(pair);
+    const order = [...byPair.keys()].sort((a, b) => (b === cur) - (a === cur) || Math.max(...byPair.get(b).map(x => x.r.t || 0)) - Math.max(...byPair.get(a).map(x => x.r.t || 0)));
+    const best = xs => xs.length ? Math.max(...xs.map(x => x.r.score)) : null;
+    const cards = order.map(p => {
+      const xs = byPair.get(p), main = xs.filter(x => x.mode === "clean" && x.dur === 60);
+      const b = best(main), bAll = best(xs.filter(x => x.mode === "all" && x.dur === 60)), b30 = best(xs.filter(x => x.dur === 30));
+      const pct = b == null ? 0 : Math.min(100, Math.round(b / TARGET * 100));
+      const extra = [bAll != null ? `all changes ${bAll}` : null, b30 != null ? `30 s ${b30}` : null].filter(Boolean).join(" · ");
+      return `<div class="hcard${p === cur ? " cur" : ""}">
+        <span class="eyebrow">${esc(p)}</span>
+        <div class="hbig"><b>${b == null ? "—" : b}</b><span class="small muted">/ ${TARGET} clean a minute</span></div>
+        <div class="hbar" role="img" aria-label="${pct}% of the target"><i style="width:${pct}%"></i></div>
+        ${main.length >= 2 ? F.sparkline(main.slice(-20).map(x => x.r.score)) : ""}
+        <span class="small muted">${xs.length} run${xs.length === 1 ? "" : "s"}${extra ? " · " + esc(extra) : ""}</span></div>`;
+    }).join("");
+    const row = r => {
+      const i = recInfo(r), n = [`<b>${r.score}</b> ${i.mode === "all" ? "changes" : "clean changes"}${i.dur !== 60 ? ` in ${i.dur} s` : ""}`];
+      if (Number.isFinite(r.sloppy) && r.sloppy) n.push(`${r.sloppy} sloppy${i.mode === "all" ? " incl." : ""}`);
+      if (Number.isFinite(r.clean)) n.push(`${r.clean}% of strums clean`);
+      if (Number.isFinite(r.bpm)) n.push(`click ${r.bpm}/${r.every}`);
+      return `<li><span>${F.fmtDate(r.t)} · ${esc(i.pair)}</span><span>${n.join(" · ")}</span></li>`;
+    };
+    el.innerHTML = `<div class="hcards">${cards}</div>
+      <ul class="hist-list">${recs.slice(-12).reverse().map(row).join("")}</ul>
+      <div class="row"><button type="button" class="btn ghost sm" data-clear>Clear history</button></div>`;
+    F.inlineConfirm(el.querySelector("[data-clear]"), () => { h.clear(); renderHist(); });
+  }
   window.addEventListener("hashchange", () => { const h = F.exerciseFromHash("changes"); if (h && h.ex.id !== ex.id) location.reload(); else if (h && pairOf(h.extra) && pairOf(h.extra).join() !== pair.join()) { pair = pairOf(h.extra); renderPair(); } });
   renderPair();
 })();
