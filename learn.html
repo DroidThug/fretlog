@@ -35,6 +35,19 @@
 .modules li a:hover { background: var(--panel-2); }
 .modules li a[aria-current="true"] { background: var(--ink); color: var(--black); }
 .modules li a[aria-current="true"]::before { color: var(--black); }
+.snotes { background: var(--panel); border: 1px solid var(--line); border-left: 4px solid var(--yellow); border-radius: var(--r); }
+.snotes summary { cursor: pointer; padding: 12px 16px; min-height: 44px; display: flex; align-items: center; justify-content: space-between; gap: 10px; font: 800 1.25rem/1.1 var(--f-display); text-transform: uppercase; list-style: none; }
+.snotes summary::-webkit-details-marker { display: none; }
+.snotes summary::after { content: "+"; color: var(--yellow); font-size: 1.6rem; }
+.snotes[open] summary::after { content: "−"; }
+.snotes .in { padding: 0 16px 16px; display: flex; flex-direction: column; gap: 12px; max-width: 72ch; }
+.snotes h3 { margin: 0; font: 600 .75rem/1 var(--f-mono); letter-spacing: .12em; text-transform: uppercase; color: var(--grey); }
+.snotes ol, .snotes ul { margin: 6px 0 0; padding-left: 1.3em; display: flex; flex-direction: column; gap: 4px; }
+.snotes p { margin: 6px 0 0; }
+.snotes .lead { margin: 0; font-size: 1.05rem; }
+.snotes .chords { display: flex; flex-wrap: wrap; gap: 10px; }
+.snotes .chords .diagram { width: 110px; }
+.snotes .credit { border-top: 1px solid var(--line); padding-top: 10px; }
 .modules li a .nv { margin-left: auto; font: .7rem var(--f-mono); color: var(--grey); }
 </style>
 </head>
@@ -46,6 +59,7 @@
 <script src="dsp.js"></script>
 <script src="chords.js"></script>
 <script src="lessons.js"></script>
+<script src="lesson-notes.js"></script>
 <script src="exercises.js"></script>
 <script src="common.js"></script>
 <script>
@@ -64,6 +78,28 @@
     const g = F.grade(), last = findLesson(F.store.get("lesson", ""));
     if (last && last.grade === g) return last;
     return L.ALL.find(x => x.grade === g) || null;
+  }
+
+  // Study notes (lesson-notes.js): our own short summaries of each video, credited and linked to Justin's page.
+  const NOTES = (window.FretNotes && window.FretNotes.NOTES) || {};
+  const noteFor = slug => Object.prototype.hasOwnProperty.call(NOTES, slug) ? NOTES[slug] : null;
+  const list = (tag, xs) => xs && xs.length ? `<${tag}>${xs.map(x => `<li>${esc(x)}</li>`).join("")}</${tag}>` : "";
+  function notesHTML(l) {
+    const n = noteFor(l.slug);
+    if (!n) return "";
+    const chords = (n.chords || []).filter(c => F.has(FretChords.CHORDS, c));
+    const open = F.store.get("snotes", false) === true;
+    return `<details class="snotes" id="snotes"${open ? " open" : ""}><summary>Study notes</summary><div class="in">
+      ${n.summary ? `<p class="lead">${esc(n.summary)}</p>` : ""}
+      ${n.steps && n.steps.length ? `<div><h3>Steps</h3>${list("ol", n.steps)}</div>` : ""}
+      ${n.mistakes && n.mistakes.length ? `<div><h3>Watch out for</h3>${list("ul", n.mistakes)}</div>` : ""}
+      ${n.practice ? `<div><h3>Practice</h3><p>${esc(n.practice)}</p></div>` : ""}
+      ${n.targets ? `<div><h3>Target</h3><p>${esc(n.targets)}</p></div>` : ""}
+      ${chords.length ? `<div class="chords">${chords.map(c => `<div class="diagram">${F.chordSVG(c)}</div>`).join("")}</div>` : ""}
+      <p class="small muted credit">My own study notes on Justin's lesson, written from the video. Not official JustinGuitar material; the video and
+        <a href="${esc(L.lessonUrl(l.slug))}" target="_blank" rel="noopener">Justin's lesson page ↗</a> are the real thing.
+        If you're from JustinGuitar and want these removed, <a href="https://github.com/DroidThug/fretlog/issues" target="_blank" rel="noopener">open an issue</a> and they'll come down.</p>
+    </div></details>`;
   }
 
   function render() {
@@ -94,6 +130,7 @@
         <a class="btn" ${prev ? `href="#${esc(prev.slug)}"` : 'aria-disabled="true" tabindex="-1" style="opacity:.4;pointer-events:none"'}>← ${prev ? "Previous" : "Start of grade"}</a>
         <a class="btn" ${next ? `href="#${esc(next.slug)}"` : 'aria-disabled="true" tabindex="-1" style="opacity:.4;pointer-events:none"'}>${next ? "Next" : "End of grade"} →</a>
       </div>
+      ${notesHTML(l)}
       <p><a href="${esc(L.lessonUrl(l.slug))}" target="_blank" rel="noopener">Lesson notes on justinguitar.com ↗</a></p>
       ${practice.length ? `<div class="stack" style="gap:8px"><p class="eyebrow">Practice this</p><div class="strip">${practice.map(e =>
         `<a href="${esc(EX.pageFor(e))}"><span class="tag">${esc(EX.ENGINES[e.engine].name)}</span><b>${esc(e.title)}</b><span class="small muted">${esc(e.blurb)}</span></a>`).join("")}</div></div>` : ""}`;
@@ -102,6 +139,8 @@
       return `<details${mi === l.mi ? " open" : ""}><summary>${esc(m[0])}</summary><ol>${ls.map(x =>
         `<li><a href="#${esc(x.slug)}"${x === l ? ' aria-current="true"' : ""}>${esc(x.title)}${x.yt ? "" : '<span class="nv">no video</span>'}</a></li>`).join("")}</ol></details>`;
     }).join("");
+    const sn = $("#snotes");
+    if (sn) sn.addEventListener("toggle", () => F.store.set("snotes", sn.open));
   }
   function go(d) {
     const l = current(); if (!l) return;

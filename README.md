@@ -6,6 +6,7 @@ A small static site for practising guitar alongside [JustinGuitar](https://www.j
   - Embedded privacy-enhanced player (`youtube-nocookie.com`, `rel=0`).
   - Previous/next lesson (also the ← → keys).
   - Link to the lesson notes on justinguitar.com.
+  - Collapsible **Study notes** for 70 of the 73 lessons (`lesson-notes.js`): short summaries in our own words (steps, things to watch out for, practice, target, chord diagrams), credited to Justin and linked to his lesson page. Not official JustinGuitar material, and no transcripts, lyrics or tabs.
   - "Practice this" links to matching exercises.
   - Deep links: `learn.html#<lesson-slug>` or `learn.html#<videoId>`.
   - Grade 2 and 3 lesson lists aren't loaded yet; those pages say so and link to justinguitar.com.

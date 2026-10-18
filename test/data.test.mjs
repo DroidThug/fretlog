@@ -1,7 +1,7 @@
 // Content checks: exercises reference real lessons and chords, ids are unique and hash-safe.
 import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
-const EX = require("../exercises.js"), L = require("../lessons.js"), CH = require("../chords.js");
+const EX = require("../exercises.js"), L = require("../lessons.js"), CH = require("../chords.js"), N = require("../lesson-notes.js");
 
 export function run(check) {
   console.log("\n(data) exercises.js / lessons.js / chords.js");
@@ -22,4 +22,9 @@ export function run(check) {
     "parsePair only accepts own chord keys (no inherited names like constructor)");
   check(CH.label("constructor") === "constructor" && CH.label("rockG") === "G (rock)", "chord labels ignore inherited keys");
   check(L.GRADES[2].modules === null && L.GRADES[3].modules === null, "Grade 2/3 lesson data is not invented");
+  const notes = Object.entries(N.NOTES), str = (v, k) => v === null || (typeof v === "string" && v.length <= k);
+  check(notes.length > 0 && notes.every(([s]) => L.BY_SLUG[s]), `${notes.length} study notes, every slug is a known lesson`);
+  check(notes.every(([, n]) => str(n.summary, 400) && str(n.practice, 300) && str(n.targets, 200) && n.steps.length <= 8 && n.mistakes.length <= 5
+    && n.steps.concat(n.mistakes).every(x => str(x, 200)) && n.chords.every(c => CH.has(CH.CHORDS, c))), "study notes respect length limits and use known chords");
+  check(notes.every(([, n]) => Object.keys(n).sort().join() === "chords,mistakes,practice,steps,summary,targets"), "study notes carry only the public fields");
 }
