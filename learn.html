@@ -88,8 +88,7 @@
     const n = noteFor(l.slug);
     if (!n) return "";
     const chords = (n.chords || []).filter(c => F.has(FretChords.CHORDS, c));
-    const open = F.store.get("snotes", false) === true;
-    return `<details class="snotes" id="snotes"${open ? " open" : ""}><summary>Study notes</summary><div class="in">
+    return `<details class="snotes" id="snotes" open><summary>Study notes</summary><div class="in">
       ${n.summary ? `<p class="lead">${esc(n.summary)}</p>` : ""}
       ${n.steps && n.steps.length ? `<div><h3>Steps</h3>${list("ol", n.steps)}</div>` : ""}
       ${n.mistakes && n.mistakes.length ? `<div><h3>Watch out for</h3>${list("ul", n.mistakes)}</div>` : ""}
@@ -139,8 +138,6 @@
       return `<details${mi === l.mi ? " open" : ""}><summary>${esc(m[0])}</summary><ol>${ls.map(x =>
         `<li><a href="#${esc(x.slug)}"${x === l ? ' aria-current="true"' : ""}>${esc(x.title)}${x.yt ? "" : '<span class="nv">no video</span>'}</a></li>`).join("")}</ol></details>`;
     }).join("");
-    const sn = $("#snotes");
-    if (sn) sn.addEventListener("toggle", () => F.store.set("snotes", sn.open));
   }
   function go(d) {
     const l = current(); if (!l) return;
